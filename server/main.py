@@ -844,17 +844,34 @@ def api_auto_branches(fetch: bool = False):
 # ------------------------------------------------------------------ static frontend
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 os.makedirs(config.FRAME_CACHE_DIR, exist_ok=True)
+
+
+class _NoCacheStatic(StaticFiles):
+    """Serve web assets with no-cache so the browser never keeps a stale app.js.
+
+    The frontend is versioned via ?v=N query strings; without this a browser can
+    keep an old cached app.js/index.html across deploys and show stale UI (e.g.
+    an empty branch dropdown even though the API returns branches).
+    """
+
+    async def get_response(self, path, scope):
+        r = await super().get_response(path, scope)
+        r.headers.setdefault("Cache-Control", "no-cache")
+        return r
+
+
 # start the auto-test scheduler (hourly fetch + daily run + manual kicks)
 auto_test.start_scheduler()
-# clone the mirror + fetch the default branch so code is ready immediately
-# (branch dropdowns and auto backtests shouldn't wait for a first-use fetch)
+# clone the mirror (synchronous guarantee) + fetch the default branch so the
+# code is present the moment the service answers; manual/auto backtests should
+# never wait for a first-use pull
 auto_test.bootstrap_mirror()
 app.mount("/results", StaticFiles(directory=batch.RESULTS_DIR, html=False), name="results")
 # Static mount for frame cache: serves video.mp4 + JPEGs with full HTTP Range
 # support so the native <video> element can seek smoothly without per-frame
 # Python route overhead.
 app.mount("/frame_cache", StaticFiles(directory=config.FRAME_CACHE_DIR, html=False), name="frame_cache")
-app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+app.mount("/", _NoCacheStatic(directory=WEB_DIR, html=True), name="web")
 
 
 if __name__ == "__main__":

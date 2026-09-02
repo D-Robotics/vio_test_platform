@@ -559,22 +559,23 @@ def _background_refresh_branches(timeout: int = 120):
 
 
 def bootstrap_mirror():
-    """Called on service start: clone the mirror and prime the branch refs.
+    """Called on service start: guarantee the source is present locally.
 
-    Runs in a background thread so boot is never stalled by a slow GitHub — the
-    service binds immediately and pulls the code concurrently. Ensures code is
-    present (default branch fetched) so branch dropdowns and auto backtests
-    don't have to wait for a first-use fetch. Best-effort; never raises.
+    Clones the mirror SYNCHRONOUSLY so that by the time the service answers the
+    code and every remote branch ref already exist locally (a clone brings all
+    refs) — manual and auto backtests never have to wait for a first-use pull.
+    The follow-up fetch to the latest default branch runs in a background thread
+    so a slow GitHub cannot stall boot. Best-effort; never raises.
     """
-    def _run():
+    _ensure_mirror()  # blocking clone; no-op once the mirror already exists
+    def _fetch_soon():
         try:
             with _fetch_lock:
-                _ensure_mirror()
                 branch = get_config().get("branch", "develop")
                 _git(["fetch", "origin", branch, "--tags", "--prune"], timeout=300, net=True)
         except Exception:  # noqa: BLE001
             pass  # best-effort; the on-demand paths retry
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=_fetch_soon, daemon=True).start()
 
 
 # -----------------------------------------------------------------------------
