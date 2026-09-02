@@ -1042,6 +1042,8 @@ canvas.path { background: var(--bg-gray); border-radius: 6px; width: 100%; heigh
 .st-ghead:hover { background: var(--fill); }
 .st-ghead .group-caret { display: inline-block; width: 12px; color: var(--text-3); }
 .st-ghead input.st-gcheck { cursor: pointer; }
+/* 统计：编号组头右侧的起止时间（不进表格），mono 等宽便于对位 */
+.st-ghead .st-time { margin-left: auto; font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .st-children { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 4px 22px; }
 .st-children.hidden { display: none; }
 .st-group[data-depth="0"] > .st-ghead { background: var(--primary-bg); border-color: var(--primary-border); }

@@ -3530,17 +3530,28 @@ function statTableHtml(rs) {
   </table>`;
 }
 
-function stGroupHtml(key, depth, label, count, inner) {
+function stGroupHtml(key, depth, label, count, inner, extra) {
   // 表格组（编号组，depth>=1）默认折叠；类型组（depth 0）默认展开
   const collapsed = depth >= 1 ? !ST_EXPANDED.has(key) : ST_COLLAPSED.has(key);
+  const extraHtml = extra ? `<span class="hint st-time">${extra}</span>` : "";
   return `<div class="st-group" data-depth="${depth}">
     <div class="st-ghead" data-key="${escapeHtml(key)}">
       <span class="group-caret">${collapsed ? "▸" : "▾"}</span>
       <input type="checkbox" class="st-gcheck" title="全选/清空本组">
-      <b>${escapeHtml(label)}</b> <span class="hint">${count} 条</span>
+      <b>${escapeHtml(label)}</b> <span class="hint">${count} 条</span>${extraHtml}
     </div>
     <div class="st-children${collapsed ? " hidden" : ""}">${inner}</div>
   </div>`;
+}
+
+// 编号组起止时间窗口（不进表格）：取组内最早开始 → 最晚完成
+function stRunWindow(rs) {
+  const fmt = (s) => String(s).replace("T", " ").slice(0, 19);
+  const starts = rs.map((r) => r.started_at).filter(Boolean).sort();
+  if (!starts.length) return "";
+  const end = rs.map((r) => r.finished_at).filter(Boolean).sort().pop();
+  const a = fmt(starts[0]);
+  return end ? `${a} → ${fmt(end)}` : `${a} → …`;
 }
 
 function stRefreshGroupChecks() {
@@ -3578,7 +3589,7 @@ function renderStatsTree(filtered) {
     const nParts = [];
     for (const [no, rs] of Array.from(nos.entries()).sort((a, b) => noKey(a[0]) - noKey(b[0]))) {
       tCount += rs.length;
-      nParts.push(stGroupHtml(`${t}/${no}`, 1, no, rs.length, statTableHtml(rs)));
+      nParts.push(stGroupHtml(`${t}/${no}`, 1, no, rs.length, statTableHtml(rs), stRunWindow(rs)));
     }
     parts.push(stGroupHtml(t, 0, ST_TYPE_LABEL[t] || t, tCount, nParts.join("")));
   }

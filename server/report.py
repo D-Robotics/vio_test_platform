@@ -83,36 +83,45 @@ def _no_key(run_no: str) -> int:
 
 
 _CSS = """
+@page { size: A4; margin: 12mm; }
 body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-       color: rgba(5,5,5,.88); margin: 24px; font-size: 13px; }
-h1 { font-size: 20px; }
-.meta { color: rgba(5,5,5,.45); font-size: 12px; }
-table { border-collapse: collapse; width: 100%; margin: 6px 0 14px; }
-th, td { border: 1px solid #f0f0f0; padding: 5px 8px; text-align: left; }
-th { background: #fafafa; }
-.st-done { color: #52c41a; } .st-failed { color: #ff4d4f; }
-.st-running, .st-pending { color: #faad14; }
-table.flat td { vertical-align: middle; }
-table.flat img { max-height: 60px; max-width: 90px; border: 1px solid #f0f0f0;
-                 border-radius: 4px; }
-table.flat .err { color: #ff4d4f; font-size: 11px; max-width: 240px;
-                  word-break: break-all; }
+       color: rgba(5,5,5,.88); margin: 0; padding: 16px 20px 36px;
+       font-size: 13px; line-height: 1.4; background: #fff; }
+h1 { font-size: 19px; margin: 2px 0 6px; }
+.meta { color: rgba(5,5,5,.45); font-size: 12px; margin-bottom: 16px; }
+table { border-collapse: collapse; width: 100%; margin: 2px 0 12px; }
+th, td { border: 1px solid #e6e6e6; padding: 6px 10px; text-align: left;
+         vertical-align: middle; }
+th { background: #f7f7f7; font-weight: 600; color: rgba(5,5,5,.6);
+     font-size: 12px; white-space: nowrap; }
+td { font-size: 12.5px; }
+td.no { width: 30px; text-align: right; color: #999; }
+td.ds { word-break: break-word; min-width: 150px; }
+td.exp { white-space: nowrap; }
+td.num, td.mono { white-space: nowrap; font-family: "SFMono-Regular", Consolas,
+                  Menlo, monospace; font-size: 12px; }
+td.ctr { text-align: center; width: 96px; }
+.st-done { color: #52c41a; font-weight: 600; white-space: nowrap; }
+.st-failed { color: #ff4d4f; font-weight: 600; white-space: nowrap; }
+.st-running, .st-pending { color: #faad14; white-space: nowrap; }
+.drift { color: rgba(5,5,5,.5); font-size: 11px; margin-top: 2px; }
 table.flat tr { page-break-inside: avoid; }
-code { background: #fafafa; padding: 1px 5px; border-radius: 4px; }
-/* collapsible groups: type → run number → flat table */
-details { margin: 4px 0; }
-details > summary {
-  cursor: pointer; user-select: none; list-style: none;
-  padding: 6px 10px; border-radius: 6px; background: #fafafa;
-  border: 1px solid #f0f0f0; font-weight: 600;
-}
-details > summary::before { content: "▾ "; color: rgba(5,5,5,.45); }
-details:not([open]) > summary::before { content: "▸ "; }
-details > summary::-webkit-details-marker { display: none; }
-details > summary:hover { background: rgba(5,5,5,.04); }
-details.lv0 > summary { background: #e6f4ff; border-color: #91caff; font-size: 15px; }
-details.lv1 > summary { font-size: 14px; }
-details > .group-body { margin: 6px 0 6px 20px; }
+table.flat .err { color: #ff4d4f; font-size: 11px; max-width: 220px;
+                  word-break: break-word; }
+/* 缩略图固定框 + contain；轨迹图为竖长图，用略高的框兼顾可读性 */
+img.thumb { object-fit: contain; width: 72px; height: 72px; display: block;
+            border: 1px solid #e6e6e6; border-radius: 5px; background: #fff; }
+img.thumb + img.thumb { margin-top: 4px; }
+code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+/* 平铺布局：回测类型 → 编号 → 通栏表，无左侧缩进，全部展开 */
+.rtype { margin: 12px 0 22px; }
+.rtype-head { font-size: 15px; font-weight: 600; background: #e6f4ff;
+              border: 1px solid #91caff; border-radius: 6px; padding: 7px 12px;
+              margin-bottom: 10px; }
+.run { margin: 0 0 4px; }
+.run-head { font-size: 13px; font-weight: 600; color: rgba(5,5,5,.8);
+            padding: 4px 2px 6px; }
+.run-no { background: #f0f0f0; padding: 1px 7px; border-radius: 4px; }
 .count { color: rgba(5,5,5,.45); font-weight: 400; font-size: 12px; }
 """
 
@@ -122,34 +131,37 @@ def _row_html(it: dict, idx: int) -> str:
     end = s.get("end")
     end_txt = (f"[{', '.join(str(x) for x in end)}]"
                if isinstance(end, (list, tuple)) else "-")
+    drift = _drift(s)
     time_txt = (f"{s.get('vio_time_avg_ms', '-')} / {s.get('vio_time_max_ms', '-')}"
                 if s.get("vio_time_avg_ms") is not None else "-")
-    prev = f'<img src="{it["preview"]}">' if it["preview"] else "—"
-    traj = f'<img src="{it["trajectory"]}">' if it["trajectory"] else "-"
+    thumbs = []
+    if it["preview"]:
+        thumbs.append(f'<img class="thumb" src="{it["preview"]}">')
+    if it["trajectory"]:
+        thumbs.append(f'<img class="thumb" src="{it["trajectory"]}">')
+    imgs = "\n".join(thumbs) if thumbs else "—"
     err = f'<div class="err">{_esc(it["error"])}</div>' if it["error"] else ""
-    return (f"<tr><td>{idx}</td><td>{_esc(it['dataset'])}</td>"
-            f"<td><b>{_esc(it['experiment'])}</b></td>"
-            f"<td>{prev}</td><td>{_esc(s.get('path_len_m', '-'))}</td>"
-            f"<td>{_esc(end_txt)}</td><td>{_drift(s)}</td><td>{traj}</td>"
-            f"<td>{time_txt}</td>"
-            f"<td class=\"st-{_esc(it['status'])}\">{_esc(it['status'])}{err}</td></tr>")
+    end_cell = _esc(end_txt)
+    if drift != "-":
+        end_cell += f'<div class="drift">漂移 {_esc(drift)} m</div>'
+    return (f"<tr><td class=\"no\">{idx}</td>"
+            f"<td class=\"ds\">{_esc(it['dataset'])}</td>"
+            f"<td class=\"exp\"><b>{_esc(it['experiment'])}</b></td>"
+            f"<td class=\"ctr\">{imgs}</td>"
+            f"<td class=\"num\">{_esc(s.get('path_len_m', '-'))}</td>"
+            f"<td class=\"mono\">{end_cell}</td>"
+            f"<td class=\"num\">{time_txt}</td>"
+            f"<td><span class=\"st-{_esc(it['status'])}\">{_esc(it['status'])}</span>{err}</td></tr>")
 
 
 def _flat_table(items: list) -> str:
     rows = "\n".join(_row_html(it, i + 1) for i, it in enumerate(items))
     return f"""<table class="flat"><thead><tr>
-      <th>#</th><th>数据集</th><th>实验组</th><th>预览</th><th>路程(m)</th>
-      <th>终点</th><th title="终点坐标与零点的 2D 距离（假设 Z=0）">漂移(m)</th>
-      <th>轨迹图</th><th>耗时 avg/max(ms)</th><th>状态</th>
+      <th class="no">#</th><th>数据集</th><th>实验组</th>
+      <th class="ctr">预览 / 轨迹</th><th class="num">路程(m)</th>
+      <th title="终点坐标与零点的 2D 距离（假设 Z=0）">终点 · 漂移</th>
+      <th class="num">耗时 avg/max(ms)</th><th>状态</th>
     </tr></thead><tbody>{rows}</tbody></table>"""
-
-
-def _group(label: str, count: int, inner: str, level: int, extra_html: str = "") -> str:
-    """One collapsible group; `open` keeps HTML expanded by default and makes
-    the PDF print fully expanded — collapse is an interactive HTML-only act."""
-    return (f'<details class="lv{level}" open><summary>{_esc(label)}{extra_html} '
-            f'<span class="count">{count} 条</span></summary>'
-            f'<div class="group-body">{inner}</div></details>')
 
 
 def build_html(items: list, title: str = "") -> str:
@@ -160,26 +172,33 @@ def build_html(items: list, title: str = "") -> str:
 <title>{_esc(title or "VIO 回测报告")}</title><style>{_CSS}</style></head><body>
 <h1>{_esc(title or "VIO 回测报告")}</h1>
 <p class="meta">生成时间 {now} · 共 {len(items)} 条 · 成功 {n_done} · 失败 {n_fail}</p>"""]
-    # 回测类型 → 编号 → 平铺表格（实验组作为表格行，不再单独折叠）
+    # 平铺布局：回测类型 → 编号 → 通栏表（实验组作为表格行），全部展开、无缩进
     tree: dict = {}
     for it in items:
         (tree.setdefault(it["type"], {})
              .setdefault(it["run_no"] or "(未编号)", [])
              .append(it))
     for t in sorted(tree, key=lambda x: _TYPE_ORDER.get(x, 9)):
-        t_inner, t_count = [], 0
-        for no in sorted(tree[t], key=_no_key):
-            rs = tree[t][no]
+        t_rs = tree[t]
+        t_count = sum(len(v) for v in t_rs.values())
+        label = f'{runno.TYPE_LABELS.get(t, t)}回测'
+        parts.append(f'<section class="rtype">'
+                     f'<div class="rtype-head">{_esc(label)} '
+                     f'<span class="count">{t_count} 条</span></div>')
+        for no in sorted(t_rs, key=_no_key):
+            rs = t_rs[no]
             rs.sort(key=lambda it: (it["dataset"], it["experiment"]))
-            t_count += len(rs)
             commit = ""
             c = next((it for it in rs if it["commit_short"]), None)
             if c:
-                commit = (f' <span class="count"><code>{_esc(c["commit_short"])}</code> '
-                          f'{_esc(c["commit_msg"])}</span>')
-            t_inner.append(_group(no, len(rs), _flat_table(rs), 1, extra_html=commit))
-        label = f'{runno.TYPE_LABELS.get(t, t)}回测'
-        parts.append(_group(label, t_count, "\n".join(t_inner), 0))
+                commit = (f' <code>{_esc(c["commit_short"])}</code> '
+                          f'<span class="count">{_esc(c["commit_msg"])}</span>')
+            parts.append(f'<div class="run">'
+                         f'<div class="run-head"><span class="run-no">{_esc(no)}</span> '
+                         f'{commit}</div>')
+            parts.append(_flat_table(rs))
+            parts.append('</div>')
+        parts.append('</section>')
     parts.append("</body></html>")
     return "\n".join(parts)
 

@@ -1109,7 +1109,11 @@ def _append_live_items(out: list):
         batches = list(_batches.values())
     for b in batches:
         commit_id = b.commit_short
-        rtype = runno.kind_of("manual", commit_id)
+        # A manual batch is always a manual backtest even when it carried a
+        # board build commit (the batch records the built sha for provenance).
+        # kind_of("manual", commit) would wrongly return "commit" here, making
+        # the live row appear under commit回测 until collection flips it to manual.
+        rtype = "manual"
         for it in b.items:
             if it.status not in ("pending", "running", "failed"):
                 continue

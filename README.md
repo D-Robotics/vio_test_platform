@@ -25,7 +25,7 @@ bash test_platform/run.sh --install    # 只补装依赖，不启动
 | 板子管理 | 板列表（boards.json，密码只存服务端）；SSH 连通性测试 |
 | 回测 | 选择板+数据集 → 自动检测/挂载 NFS（复用板上已有挂载，如 /mnt/nfs20）→ SSH 启动全链（static TF×2 + ov_web + VIO launch + bag play，launch 参数按 bag topic 自动映射）→ 进程状态灯 + 日志滚动 → 内嵌 ov_web（板:9988）iframe；一键停止清理全部进程 |
 | 批量回测 | 回测 Tab 内多选数据集 → 顺序执行（每项等 bag 播完/VIO 退出自动进入下一项）→ 每项结束 SFTP 自动收集结果（ov_est.tum/state/结果bag）到 `test_platform/results/<批次>/` |
-| 统计 | 统计 Tab：每数据集一张卡片——数据名、首帧预览图、轨迹图（matplotlib 渲染）、**ov_web 可视化录像（video.mp4，浏览器内直接播放）**、起点/终点坐标、路程、时长、位姿数、状态/错误；结果持久化（_meta.json），服务重启不丢 |
+| 统计 | 统计 Tab：每数据集一张卡片——数据名、首帧预览图、轨迹图（matplotlib 渲染）、**ov_web 可视化录像（video.mp4，浏览器内直接播放）**、起点/终点坐标、路程、时长、位姿数、状态/错误；结果持久化（_meta.json），服务重启不丢。按回测类型 → 编号分组，**每个编号组头右侧显示该次回测的起止时间**（最早开始 → 最晚完成，不进表格） |
 
 ## API（/api 前缀，见 server/main.py）
 
