@@ -270,7 +270,10 @@
           <div class="sidebar-form">
             <label class="field"><span>板子</span><select id="bt-board"></select></label>
             <div class="field"><span>代码分支</span>
-              <select id="bt-branch" title="选择分支 = 先在主机交叉编译该分支并部署到板端，再开始回测"><option value="">不构建（用板端现有版本）</option></select>
+              <span class="branch-wrap">
+                <select id="bt-branch" title="选择分支 = 先在主机交叉编译该分支并部署到板端，再开始回测"><option value="">不构建（用板端现有版本）</option></select>
+                <button id="bt-pull-code" class="small" title="手动拉取源码。本地无代码或克隆报错时用；可先勾选下方「git 走代理」再点">拉取代码</button>
+              </span>
               <div id="bt-branch-err" class="branch-err hidden"></div>
             </div>
             <label class="field"><span>VIO commit</span><select id="bt-commit" title="默认当前代码 = 板端已装版本"><option value="">当前代码 (HEAD)</option></select></label>
@@ -419,6 +422,7 @@
               <span class="branch-wrap">
                 <select id="auto-branch"></select>
                 <button id="auto-branch-refresh" class="small" title="从远端刷新分支列表 (git fetch)">↻</button>
+                <button id="auto-pull-code" class="small primary" title="手动拉取源码。本地无代码或克隆报错时用；可先勾选上方「git 走代理」再点">拉取代码</button>
               </span>
             </label>
             <div id="auto-branch-err" class="branch-err hidden"></div>
@@ -531,6 +535,6 @@
 </section>
 
 <script src="vendor/uplot.iife.min.js"></script>
-<script src="app.js?v=157"></script>
+<script src="app.js?v=158"></script>
 </body>
 </html>

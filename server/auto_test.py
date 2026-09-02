@@ -206,6 +206,33 @@ def mirror_error() -> str:
     return _mirror_error
 
 
+def _mirror_error_from(err: str, used_proxy: bool, action: str) -> str:
+    """Build a user-facing mirror error, classifying common GitHub failures.
+
+    action is "克隆" or "拉取" (what the user was doing). Classifies 403 (no
+    read access) and network/timeout failures so the hint tells the user the
+    right next step instead of dumping a raw git error at them.
+    """
+    e = (err or "").strip()
+    low = e.lower()
+    msg = f"镜像仓库{action}失败，本地没有代码。\n"
+    if "403" in e or "write access" in low or "not granted" in low or "repository not found" in low:
+        msg += ("GitHub 返回 403，疑似没有该仓库的读取权限（私有仓库或凭据不足）。"
+                + ("当前已走代理仍失败，请检查代理是否可用，或提供有权限的凭据。"
+                   if used_proxy else "可勾选「git 走代理 (proxychains4)」后重试，或提供有权限的凭据。"))
+    elif "timeout" in low or "could not resolve host" in low or "connection" in low or "unable to access" in low:
+        msg += ("网络不可达或超时。"
+                + ("当前已走代理仍失败，请检查代理是否可用。" if used_proxy
+                   else "请在「配置」面板开启「git 走代理 (proxychains4)」后重试，或检查网络。"))
+    else:
+        msg += ("疑似网络或代理问题。"
+                + ("请检查代理是否可用。" if used_proxy
+                   else "请检查网络，或在「配置」面板开启「git 走代理 (proxychains4)」后重试。"))
+    if e:
+        msg += "\n详情：" + e[-300:]
+    return msg
+
+
 def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
     """Clone the GitHub remote if not already cloned. Idempotent.
 
@@ -247,10 +274,8 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
             shutil.rmtree(_MIRROR_DIR, ignore_errors=True)
         except OSError:
             pass
-        _mirror_error = ("镜像仓库克隆失败，本地没有代码。"
-                         + ("请检查网络或开启“git 走代理 (proxychains4)”。" if not use_proxy_flag
-                            else "当前已走代理仍失败，请检查代理是否可用。")
-                         + (" 详情：" + (r.stderr.strip()[-200:] if r is not None and r.stderr else "超时")))
+        _mirror_error = _mirror_error_from(
+            (r.stderr if r is not None else "") or "", use_proxy_flag, "克隆")
         return False
     _mirror_error = ""
     return True
@@ -580,6 +605,32 @@ def _background_refresh_branches(timeout: int = 120):
         with _fetch_lock:
             _git(["fetch", "origin", "--prune"], timeout=timeout, net=True)
     threading.Thread(target=_run, daemon=True).start()
+
+
+def pull_mirror(use_proxy: "bool | None" = None) -> tuple:
+    """Manual "拉取代码" action: ensure the source is present and up to date.
+
+    No mirror yet -> clone it (honours use_proxy). Already cloned -> fetch the
+    default branch + tags in the foreground so the user gets a real, immediate
+    result instead of the silent-empty dropdown they saw before. Returns
+    (ok, detail) and refreshes `_mirror_error` so the UI can resurface it.
+    """
+    global _mirror_error
+    if not os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
+        ok = _ensure_mirror(use_proxy)
+        return ok, ("" if ok else _mirror_error)
+    used_proxy = get_config().get("use_proxy", False) if use_proxy is None else use_proxy
+    branch = get_config().get("branch", "develop")
+    with _fetch_lock:
+        rc, out, err = _git(["fetch", "origin", branch, "--tags", "--prune"],
+                            timeout=300, net=True, use_proxy=use_proxy)
+    if rc == 0:
+        _mirror_error = ""
+        rc2, out2, _ = _git(["rev-parse", f"origin/{branch}"])
+        sha = out2.strip()[:8] if rc2 == 0 else ""
+        return True, f"已拉取 {branch} 分支最新代码（{sha}）"
+    _mirror_error = _mirror_error_from((err or out) or "", used_proxy, "拉取")
+    return False, _mirror_error
 
 
 def bootstrap_mirror():

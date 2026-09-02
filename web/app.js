@@ -2542,6 +2542,33 @@ $("#auto-branch-refresh").addEventListener("click", async () => {
   await refreshAllBranchSelects(true);
   btn.disabled = false;
 });
+
+// 手动拉取源码：本地无代码（克隆失败/403）或想立即更新时用。proxySel 是所在
+// 面板里「git 走代理」复选框的 selector；勾选后传给服务端走 proxychains4。
+async function pullCode(btn, proxySel) {
+  if (!btn) return;
+  const proxyEl = $(proxySel);
+  const useProxy = !!(proxyEl && proxyEl.checked);
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "拉取中…";
+  try {
+    const r = await api("/api/auto/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ use_proxy: useProxy }),
+    });
+    await refreshAllBranchSelects(false);
+    popupAlert(r.ok ? `代码拉取成功 ✓\n\n${r.detail}` : `代码拉取失败 ✗\n\n${r.detail}`);
+  } catch (e) {
+    popupAlert("拉取请求失败：" + (e && e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+$("#auto-pull-code").addEventListener("click", (e) => pullCode(e.currentTarget, "#auto-use-proxy"));
+$("#bt-pull-code").addEventListener("click", (e) => pullCode(e.currentTarget, "#bt-use-proxy"));
 $("#auto-tasks-refresh").addEventListener("click", loadAutoTasks);
 function updateAutoDsToggleLabel() {
   const btn = document.querySelector("#auto-ds-toggle");

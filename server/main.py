@@ -842,6 +842,21 @@ def api_auto_branches(fetch: bool = False):
             "error": auto_test.mirror_error()}
 
 
+class AutoPullBody(BaseModel):
+    use_proxy: bool | None = None
+
+
+@app.post("/api/auto/pull")
+def api_auto_pull(b: AutoPullBody):
+    """Manual "拉取代码": clone if absent, else fetch the default branch.
+
+    Lets a user resolve a fresh-host clone failure from the UI (with the
+    proxy toggle) instead of being stuck on a silent-empty dropdown.
+    """
+    ok, detail = auto_test.pull_mirror(b.use_proxy)
+    return {"ok": ok, "detail": detail, "error": auto_test.mirror_error()}
+
+
 # ------------------------------------------------------------------ static frontend
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 os.makedirs(config.FRAME_CACHE_DIR, exist_ok=True)
