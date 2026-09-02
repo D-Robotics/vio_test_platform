@@ -838,7 +838,8 @@ def api_auto_commits(limit: int = 100, branch: str = ""):
 
 @app.get("/api/auto/branches")
 def api_auto_branches(fetch: bool = False):
-    return {"branches": auto_test.list_remote_branches(fetch=fetch)}
+    return {"branches": auto_test.list_remote_branches(fetch=fetch),
+            "error": auto_test.mirror_error()}
 
 
 # ------------------------------------------------------------------ static frontend

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>VIO 数据管理与回测平台</title>
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=129">
+<link rel="stylesheet" href="style.css?v=130">
 </head>
 <body>
 <header>
@@ -269,7 +269,10 @@
         <div class="sidebar-pane" data-side-pane="manual-config">
           <div class="sidebar-form">
             <label class="field"><span>板子</span><select id="bt-board"></select></label>
-            <label class="field"><span>代码分支</span><select id="bt-branch" title="选择分支 = 先在主机交叉编译该分支并部署到板端，再开始回测"><option value="">不构建（用板端现有版本）</option></select></label>
+            <div class="field"><span>代码分支</span>
+              <select id="bt-branch" title="选择分支 = 先在主机交叉编译该分支并部署到板端，再开始回测"><option value="">不构建（用板端现有版本）</option></select>
+              <div id="bt-branch-err" class="branch-err hidden"></div>
+            </div>
             <label class="field"><span>VIO commit</span><select id="bt-commit" title="默认当前代码 = 板端已装版本"><option value="">当前代码 (HEAD)</option></select></label>
             <div class="row" style="gap: 6px;">
               <button id="bt-env" class="small">环境检查</button>
@@ -418,6 +421,7 @@
                 <button id="auto-branch-refresh" class="small" title="从远端刷新分支列表 (git fetch)">↻</button>
               </span>
             </label>
+            <div id="auto-branch-err" class="branch-err hidden"></div>
             <label class="field"><span>每日定时 (HH:MM)</span><input id="auto-daily-time" type="time" value="02:00"></label>
             <label class="field"><span>板子</span><select id="auto-board-ip"></select></label>
             <label class="field"><span>编译命令</span><input id="auto-build-cmd" placeholder="build-tros-x5 drobotics_vio"></label>
@@ -527,6 +531,6 @@
 </section>
 
 <script src="vendor/uplot.iife.min.js"></script>
-<script src="app.js?v=156"></script>
+<script src="app.js?v=157"></script>
 </body>
 </html>

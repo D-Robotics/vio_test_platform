@@ -2005,7 +2005,9 @@ async function loadAutoConfig() {
     const c = await api("/api/auto/config");
     $("#auto-enabled").checked = !!c.enabled;
     $("#auto-github-url").value = c.github_url || "";
-    fillBranchSelect($("#auto-branch"), await loadBranches(), { selected: c.branch || "master" });
+    const br = await loadBranches();
+    fillBranchSelect($("#auto-branch"), br.branches, { selected: c.branch || "develop" });
+    showBranchesError(br.error);
     $("#auto-hourly-check").checked = !!c.hourly_check;
     $("#auto-daily-time").value = c.daily_time || "02:00";
     if (c.board_ip) $("#auto-board-ip").value = c.board_ip;
@@ -2497,8 +2499,17 @@ $("#auto-run-now").addEventListener("click", runAutoNow);
 async function loadBranches(fetch = false) {
   try {
     const r = await api("/api/auto/branches" + (fetch ? "?fetch=1" : ""));
-    return r.branches || [];
-  } catch (e) { return []; }
+    return { branches: r.branches || [], error: r.error || "" };
+  } catch (e) { return { branches: [], error: String(e && e.message || e) }; }
+}
+
+function showBranchesError(msg) {
+  for (const sel of ["#bt-branch-err", "#auto-branch-err"]) {
+    const el = $(sel);
+    if (!el) continue;
+    el.textContent = msg || "";
+    el.classList.toggle("hidden", !msg);
+  }
 }
 
 // 填充分支下拉；selected 不在列表时补一个 option 保留它（例如已保存但未 fetch 的分支）
@@ -2519,9 +2530,10 @@ function fillBranchSelect(sel, branches, { allowEmpty = false, emptyLabel = "", 
 }
 
 async function refreshAllBranchSelects(fetch = false) {
-  const branches = await loadBranches(fetch);
+  const { branches, error } = await loadBranches(fetch);
   fillBranchSelect($("#auto-branch"), branches);
   fillBranchSelect($("#bt-branch"), branches, { allowEmpty: true, emptyLabel: "不构建（用板端现有版本）" });
+  showBranchesError(error);
 }
 
 $("#auto-branch-refresh").addEventListener("click", async () => {
@@ -3688,3 +3700,5 @@ loadDatasets = async function (refresh = false) {
 // the boot loadDatasets() ran before this wrapper existed — paint the list
 // as soon as it settles so the 回测 tab isn't empty on first switch
 _bootDsPromise.then(() => { renderBtDsList(); maybeRefreshIdleTable(); });
+// surface mirror/clone failures early so the branch dropdowns aren't silently empty
+refreshAllBranchSelects();

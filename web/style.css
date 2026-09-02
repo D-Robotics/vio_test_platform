@@ -359,6 +359,19 @@ input[type="range"]::-moz-range-thumb {
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .status { color: var(--text-2); font-size: 12px; }
 .hint { color: var(--text-3); font-size: 12px; }
+.branch-err {
+  margin: 4px 0 8px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.branch-err.hidden { display: none; }
 
 /* ---------- 数据集 split 布局 ---------- */
 .split { display: flex; gap: 16px; height: 100%; }

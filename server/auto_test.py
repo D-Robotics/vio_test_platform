@@ -67,6 +67,10 @@ _DEFAULT_CONFIG = {
 _state_lock = threading.Lock()
 # serialises mirror fetch/refresh so a slow GitHub never races a second one
 _fetch_lock = threading.Lock()
+# last mirror-clone failure (surfaced to the UI instead of silently failing)
+_mirror_error = ""
+# last auto-build failure (when a first deploy triggers the cross-build)
+_last_build_error = ""
 _state = {"config": dict(_DEFAULT_CONFIG), "tasks": [], "last_seen_sha": "",
            "last_hourly_check": "", "last_daily_run": "", "next_hourly_check": "",
            "next_daily_run": ""}
@@ -180,6 +184,7 @@ def get_scheduler_status() -> dict:
     with _state_lock:
         return {
             "scheduler_alive": _scheduler_thread is not None and _scheduler_thread.is_alive(),
+            "mirror_error": _mirror_error,
             "config": dict(_state["config"]),
             "last_seen_sha": _state["last_seen_sha"],
             "last_hourly_check": _state["last_hourly_check"],
@@ -196,8 +201,16 @@ def get_scheduler_status() -> dict:
 # -----------------------------------------------------------------------------
 # Git / mirror
 # -----------------------------------------------------------------------------
-def _ensure_mirror(use_proxy: "bool | None" = None) -> None:
+def mirror_error() -> str:
+    """Last mirror-clone failure ("" when the clone is fine / not attempted)."""
+    return _mirror_error
+
+
+def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
     """Clone the GitHub remote if not already cloned. Idempotent.
+
+    Returns True when the mirror is present (cloned or already there); False
+    records the failure in _mirror_error and leaves no hollow _MIRROR_DIR.
 
     Critical: if the clone fails (network, auth, etc.), we MUST NOT leave a
     hollow _MIRROR_DIR — subsequent `git -C <mirror>` calls would walk up the
@@ -208,15 +221,19 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> None:
     use_proxy: None → follow the auto config; True/False → force/forbid the
     proxychains4 wrapper (a manual batch can pin its own proxy choice).
     """
+    global _mirror_error
     cfg = get_config()
     if os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
-        return
+        _mirror_error = ""
+        return True
     os.makedirs(os.path.dirname(_MIRROR_DIR), exist_ok=True)
     url = cfg.get("github_url", "")
     if not url:
-        return
+        _mirror_error = "未配置镜像仓库地址（github_url）"
+        return False
+    use_proxy_flag = cfg.get("use_proxy", False) if use_proxy is None else use_proxy
     cmd = ["git", "clone", url, _MIRROR_DIR]
-    if (cfg.get("use_proxy", False) if use_proxy is None else use_proxy):
+    if use_proxy_flag:
         cmd = ["proxychains4"] + cmd
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -230,6 +247,13 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> None:
             shutil.rmtree(_MIRROR_DIR, ignore_errors=True)
         except OSError:
             pass
+        _mirror_error = ("镜像仓库克隆失败，本地没有代码。"
+                         + ("请检查网络或开启“git 走代理 (proxychains4)”。" if not use_proxy_flag
+                            else "当前已走代理仍失败，请检查代理是否可用。")
+                         + (" 详情：" + (r.stderr.strip()[-200:] if r is not None and r.stderr else "超时")))
+        return False
+    _mirror_error = ""
+    return True
 
 
 def _git(args: list, timeout: int = 120, net: bool = False,
@@ -568,6 +592,8 @@ def bootstrap_mirror():
     so a slow GitHub cannot stall boot. Best-effort; never raises.
     """
     _ensure_mirror()  # blocking clone; no-op once the mirror already exists
+    if not os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
+        return  # clone failed (mirror_error set) — a fetch would just fail too
     def _fetch_soon():
         try:
             with _fetch_lock:
@@ -656,14 +682,50 @@ def _deploy_install(ip: str, install_dir: str = None, sha: str = None) -> tuple:
     return True, f"deployed to {board_path}"
 
 
+def _ensure_build_for_deploy() -> tuple:
+    """Return (install_dir, label, sha); auto-build when install/ is missing.
+
+    First deploy on a fresh host: the mirror has source but was never compiled.
+    Run the configured cross-build (build_x5_docker.sh) into _MIRROR_DIR/install
+    so the deploy needs no manual build. Returns (None, "", "") + sets
+    _last_build_error on failure.
+    """
+    global _last_build_error
+    d, label, sha = _locate_install()
+    if d:
+        return d, label, sha
+    cfg = get_config()
+    if not os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
+        return None, "", ""  # no source at all -> caller surfaces the clone error
+    if not cfg.get("build_enabled", True):
+        _last_build_error = "没有任何构建产物，且 build_enabled=false（未开启自动构建）"
+        return None, "", ""
+    branch = cfg.get("branch", "develop")
+    rc, out, _ = _git(["rev-parse", f"origin/{branch}"])
+    commit = out.strip() if rc == 0 else _repo_head_sha(_MIRROR_DIR)
+    if not commit:
+        _last_build_error = f"无法解析分支 {branch} 的提交，无法自动编译"
+        return None, "", ""
+    ok, log = _run_build(commit)
+    if not ok:
+        _last_build_error = f"自动交叉编译失败：\n{log[-1000:]}"
+        return None, "", ""
+    _last_build_error = ""
+    return _locate_install()
+
+
 def deploy_to_board(ip: str) -> dict:
-    """Public wrapper: deploy the best available built install/ to the board."""
-    install_dir, label, sha = _locate_install()
+    """Public wrapper: deploy the best available built install/ to the board.
+
+    When no install/ exists yet, triggers the mirror cross-build first so a fresh
+    host deploys without a manual build.
+    """
+    install_dir, label, sha = _ensure_build_for_deploy()
     if not install_dir:
         return {"ok": False,
-                "detail": ("镜像仓库还没有构建产物（install/ 不存在），无法自动部署。\n"
-                           "请先在「自动」面板跑一次构建，或用指定分支启动批次触发构建+部署；\n"
-                           "或在本地手动交叉编译 drobotics_vio（该平台的上一级目录）。")}
+                "detail": (_last_build_error or
+                           "镜像仓库与本地都没有构建产物，且无法自动编译；请检查网络是否能 clone 源码，"
+                           "或手动交叉编译 drobotics_vio（该平台的上一级目录）。")}
     ok, detail = _deploy_install(ip, install_dir, sha)
     return {"ok": ok, "detail": detail, "source": label,
             "board_path": get_config().get("board_install_path")}
@@ -677,10 +739,10 @@ def ensure_deployed(ip: str) -> tuple:
     `_deploy_install`; when it matches the source HEAD the transfer is skipped.
     Returns (ok, detail).
     """
-    install_dir, label, sha = _locate_install()
+    install_dir, label, sha = _ensure_build_for_deploy()
     if not install_dir:
-        return False, ("镜像仓库还没有构建产物（install/ 不存在），无法自动部署。"
-                       "请先在「自动」面板跑一次构建，或用指定分支启动批次触发构建+部署，"
+        return False, (_last_build_error or
+                       "镜像仓库与本地都没有构建产物，且无法自动编译；请检查网络是否能 clone 源码，"
                        "或手动交叉编译 drobotics_vio（该平台的上一级目录）。")
     board_path = get_config().get("board_install_path", config.BOARD_INSTALL_DIR)
     if sha:
