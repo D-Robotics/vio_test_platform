@@ -7,16 +7,20 @@ run it over SSH — or locally on the host if ffmpeg exists there).
 """
 import asyncio
 import glob
+import io
+import json
 import os
 import subprocess
 import threading
 import time
 
+from PIL import Image, ImageDraw
+
 
 class OvWebRecorder:
     """Records one backtest run's ov_web stream into <outdir>/frames/ + video.mp4."""
 
-    def __init__(self, ip: str, port: int, outdir: str, max_seconds: int = 900):
+    def __init__(self, ip: str, port: int, outdir: str, max_seconds: int = 900, minimap: bool = True):
         self.ip = ip
         self.port = port
         self.outdir = outdir
@@ -27,12 +31,88 @@ class OvWebRecorder:
         self.json_last = ""
         self._stop = threading.Event()
         self._thread = None
+        # Trajectory minimap overlay (server-side). True = composite a top-down map
+        # of the odom-frame path into a corner of each frame; False = legacy raw JPEG.
+        self.minimap = minimap
+        self.minimap_size = 180
+        self.traj_points = []  # [(x, y), ...] odom-frame XY trajectory
+        self.has_path = False  # True once a full `path` array was received
+        self.latest_pos = (0.0, 0.0)  # current robot position (odom XY)
+        self._border = 12  # corner margin when pasting the minimap
 
     # ---------------------------------------------------------- lifecycle
     def start_async(self):
         os.makedirs(self.frames_dir, exist_ok=True)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    # ---------------------------------------------------------- trajectory minimap
+    def _update_state(self, raw: str):
+        """Parse one ov_web JSON state message into a 2D odom-frame trajectory."""
+        try:
+            st = json.loads(raw)
+        except Exception:  # noqa: BLE001 - malformed frame; keep prior trajectory
+            return
+        path = st.get("path")
+        # Full `path` array is authoritative (already in odom frame, downsample <=500).
+        if isinstance(path, list) and len(path) >= 2 and isinstance(path[0], (list, tuple)):
+            self.traj_points = [(float(p[0]), float(p[1])) for p in path]
+            self.has_path = True
+        if isinstance(path, list) and path:
+            self.latest_pos = (float(path[-1][0]), float(path[-1][1]))
+        if "opx" in st and "opy" in st:
+            self.latest_pos = (float(st["opx"]), float(st["opy"]))
+            if not self.has_path:
+                # Fallback: accumulate from odom positions, dedup consecutive jitter.
+                last = self.traj_points[-1] if self.traj_points else None
+                if last is None or abs(last[0] - self.latest_pos[0]) > 1e-6 or abs(last[1] - self.latest_pos[1]) > 1e-6:
+                    self.traj_points.append(self.latest_pos)
+                if len(self.traj_points) > 2000:
+                    self.traj_points = self.traj_points[-2000:]
+
+    def _render_minimap(self) -> "Image.Image | None":
+        """Render a top-down trajectory map as an RGBA overlay (fit-all, y flipped)."""
+        pts = self.traj_points
+        if len(pts) < 1 or not self.minimap:
+            return None
+        S = self.minimap_size
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x0, x1 = min(xs), max(xs)
+        y0, y1 = min(ys), max(ys)
+        span_x = max(x1 - x0, 1e-6)
+        span_y = max(y1 - y0, 1e-6)
+        pad = 0.25 * max(span_x, span_y)
+        x0 -= pad
+        x1 += pad
+        y0 -= pad
+        y1 += pad
+        span_x = max(x1 - x0, 1e-6)
+        span_y = max(y1 - y0, 1e-6)
+        m = 10  # inner margin
+        sc = (S - 2 * m) / max(span_x, span_y)
+
+        def to_px(x, y):
+            u = m + (x - x0) * sc
+            v = S - m - (y - y0) * sc  # y-axis flipped (odom X fwd, Y left)
+            return (u, v)
+
+        ov = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ov)
+        d.rounded_rectangle([0, 0, S - 1, S - 1], radius=6, fill=(20, 20, 20, 150),
+                            outline=(0, 255, 0, 160), width=1)
+        for k in range(1, 4):  # light 4-cell grid
+            d.line([(int(S * k / 4.0), 0), (int(S * k / 4.0), S - 1)], fill=(60, 60, 60, 60), width=1)
+            d.line([(0, int(S * k / 4.0)), (S - 1, int(S * k / 4.0))], fill=(60, 60, 60, 60), width=1)
+        if len(pts) >= 2:
+            d.line([to_px(*p) for p in pts], fill=(0, 255, 0, 255), width=2)
+        cx, cy = to_px(*self.latest_pos)
+        r = 4
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 200, 255, 255),
+                  outline=(255, 255, 255, 255), width=1)
+        sx, sy = to_px(*pts[0])
+        d.ellipse([sx - 3, sy - 3, sx + 3, sy + 3], outline=(255, 255, 0, 255), width=2)
+        return ov
 
     def stop_and_mux(self, fps: int = 15) -> "str | None":
         """Stop recording and mux frames into video.mp4; returns path or None."""
@@ -78,13 +158,23 @@ class OvWebRecorder:
                     if not isinstance(msg, (bytes, bytearray)) or len(msg) < 2:
                         continue
                     if msg[0] == 0:  # JPEG
-                        idx = self.frame_count
-                        with open(os.path.join(self.frames_dir, f"f{idx:06d}.jpg"), "wb") as f:
-                            f.write(bytes(msg[1:]))
+                        raw = bytes(msg[1:])
+                        buf_out = raw
+                        mm = self._render_minimap()
+                        if mm is not None:
+                            im = Image.open(io.BytesIO(raw)).convert("RGB")
+                            im.paste(mm, (im.width - mm.width - self._border,
+                                          im.height - mm.height - self._border), mm)
+                            out = io.BytesIO()
+                            im.save(out, "JPEG", quality=90)
+                            buf_out = out.getvalue()
+                        with open(os.path.join(self.frames_dir, f"f{self.frame_count:06d}.jpg"), "wb") as f:
+                            f.write(buf_out)
                         self.frame_count += 1
                     elif msg[0] == 1:  # JSON state
                         try:
                             self.json_last = bytes(msg[1:]).decode("utf-8", "replace")
+                            self._update_state(self.json_last)
                         except Exception:  # noqa: BLE001
                             pass
             except Exception:  # noqa: BLE001 - connection dropped → reconnect

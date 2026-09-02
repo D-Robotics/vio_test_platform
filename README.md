@@ -52,4 +52,5 @@ VIO 收不到图像。VIO 节点、bag 播放、TF、进程管理、日志回传
 - 实时：回测 Tab 的 iframe 直连 `http://<板IP>:9988/`（ov_web，板端运行）。
 - 录像：批量回测运行期间，平台在主机侧连接 `ws://<板IP>:9988/ws` 录制 ov_web 推送的
   JPEG 可视化帧，结束后 ffmpeg 合成 `video.mp4`（h264, 15fps），原始帧目录自动清理，
-  视频在统计 Tab 卡片内直接播放。
+  视频在统计 Tab 卡片内直接播放。录制时会把 JSON 里的 odom 轨迹解析成一张**俯视轨迹小地图**
+  叠加到每帧右下角，视频里即可看到机器人行走轨迹。（`record.py` `OvWebRecorder`，`minimap=False` 可关闭。）
