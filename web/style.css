@@ -1524,6 +1524,18 @@ canvas.path { background: var(--bg-gray); border-radius: 6px; width: 100%; heigh
   animation: spin 0.9s linear infinite;
 }
 
+.spinner-sm {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- 实验编辑 list ---------- */

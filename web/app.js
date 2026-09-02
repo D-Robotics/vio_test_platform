@@ -1011,9 +1011,9 @@ $("#bd-add").addEventListener("click", async () => {
   if (!ip) return;
   if (!isValidIPv4(ip)) return popupAlert(`不是合法的 IPv4 地址：${ip}（例：192.168.1.10）`);
   const btn = $("#bd-add");
-  const orig = btn.textContent;
+  const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = "正在添加中…";
+  btn.innerHTML = '<span class="spinner-sm"></span>正在添加中…';
   showToast(`正在添加板子 ${ip}：校验 SSH 登录，请稍候…`, 6000);
   try {
     await api("/api/boards", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -1025,7 +1025,7 @@ $("#bd-add").addEventListener("click", async () => {
     popupAlert(`添加板子 ${ip} 失败：${e.message}`);
   } finally {
     btn.disabled = false;
-    btn.textContent = orig;
+    btn.innerHTML = orig;
   }
 });
 

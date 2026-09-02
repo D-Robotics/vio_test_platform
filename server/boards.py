@@ -89,7 +89,7 @@ def get_board(ip: str) -> dict:
 class Ssh:
     """Thin paramiko wrapper: exec with timeout, returns (rc, stdout, stderr)."""
 
-    def __init__(self, ip: str, user: str = None, password: str = None, timeout: int = 20):
+    def __init__(self, ip: str, user: str = None, password: str = None, timeout: int = 10):
         self.ip = ip
         b = None
         try:
