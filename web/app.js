@@ -2250,7 +2250,7 @@ async function saveAutoConfig() {
   const body = {
     enabled: $("#auto-enabled").checked,
     github_url: $("#auto-github-url").value.trim(),
-    branch: $("#auto-branch").value.trim() || "master",
+    branch: $("#auto-branch").value.trim() || "develop",
     hourly_check: $("#auto-hourly-check").checked,
     daily_time: $("#auto-daily-time").value || "02:00",
     board_ip: $("#auto-board-ip").value,
@@ -2508,9 +2508,73 @@ function showBranchesError(msg) {
     const el = $(sel);
     if (!el) continue;
     el.textContent = msg || "";
+    if (msg) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "small";
+      b.textContent = "配置 Git 权限";
+      b.style.marginTop = "6px";
+      b.addEventListener("click", openGitTokenModal);
+      el.appendChild(b);
+    }
     el.classList.toggle("hidden", !msg);
   }
 }
+
+// --- Git 访问权限：只读 token，仅在 clone/fetch 时使用，绝不回显 ---
+let GIT_TOKEN_CLEAR = false;
+
+async function openGitTokenModal() {
+  GIT_TOKEN_CLEAR = false;
+  const inp = $("#git-token-input");
+  const status = $("#git-token-save-status");
+  inp.value = "";
+  status.textContent = "";
+  try {
+    const c = await api("/api/auto/config");
+    inp.placeholder = c.github_token_set ? "已配置（留空 = 不修改）" : "粘贴只读 token";
+    inp.dataset.set = c.github_token_set ? "1" : "";
+  } catch (e) { inp.placeholder = "粘贴只读 token"; }
+  $("#git-token-modal").classList.remove("hidden");
+  inp.focus();
+}
+
+async function saveGitToken() {
+  const inp = $("#git-token-input");
+  const status = $("#git-token-save-status");
+  const tok = inp.value.trim();
+  const body = {};
+  if (tok) body.github_token = tok;
+  else if (GIT_TOKEN_CLEAR) body.github_token = "";
+  if (!("github_token" in body)) { status.textContent = "未输入 → 保持不变"; return; }
+  status.textContent = "保存中…";
+  try {
+    const c = await api("/api/auto/config", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("#git-token-modal").classList.add("hidden");
+    popupAlert(c.github_token_set ? "已保存 ✓\n会用于拉取代码（仅 clone/fetch）。"
+                                  : "已清除权限 ✓");
+    await refreshAllBranchSelects(false);
+    const pullBtn = $("#auto-pull-code");
+    if (c.github_token_set && pullBtn) pullCode(pullBtn, "#auto-use-proxy");
+  } catch (e) {
+    status.textContent = "保存失败：" + (e && e.message || e);
+  }
+}
+
+$("#git-token-save").addEventListener("click", saveGitToken);
+$("#git-token-close").addEventListener("click", () => $("#git-token-modal").classList.add("hidden"));
+$("#git-token-modal").addEventListener("click", (e) => {
+  if (e.target.id === "git-token-modal") $("#git-token-modal").classList.add("hidden");
+});
+$("#auto-git-token-btn").addEventListener("click", openGitTokenModal);
+$("#git-token-clear").addEventListener("click", () => {
+  GIT_TOKEN_CLEAR = true;
+  $("#git-token-input").value = "";
+  $("#git-token-save-status").textContent = "将清除已保存权限，点「保存」生效";
+});
 
 // 填充分支下拉；selected 不在列表时补一个 option 保留它（例如已保存但未 fetch 的分支）
 function fillBranchSelect(sel, branches, { allowEmpty = false, emptyLabel = "", selected = "" } = {}) {

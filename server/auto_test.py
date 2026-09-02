@@ -19,7 +19,9 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import types
@@ -61,6 +63,9 @@ _DEFAULT_CONFIG = {
     "board_install_path": config.BOARD_INSTALL_DIR,
     "use_proxy": False,
     "launch_script_override": "",
+    # read-only GitHub credential (fine-grained PAT or deploy-style token) used
+    # ONLY for cloning/fetching the mirror; masked in every API response.
+    "github_token": "",
 }
 
 # in-memory state
@@ -153,6 +158,23 @@ def get_config() -> dict:
         return dict(_state["config"])
 
 
+def _mask_config(cfg: dict) -> dict:
+    """Copy of cfg with the secret stripped: the UI may never see the token.
+
+    Returns a `github_token_set` boolean so the frontend can show "已配置"
+    while the input stays empty (the token is write-only by design).
+    """
+    c = dict(cfg)
+    c["github_token_set"] = bool(c.get("github_token"))
+    c["github_token"] = ""
+    return c
+
+
+def public_config() -> dict:
+    with _state_lock:
+        return _mask_config(_state["config"])
+
+
 def update_config(partial: dict) -> dict:
     with _state_lock:
         cfg = _state["config"]
@@ -160,7 +182,7 @@ def update_config(partial: dict) -> dict:
             if k in cfg and v is not None:
                 cfg[k] = v
         _save_state()
-        return dict(cfg)
+        return _mask_config(cfg)
 
 
 def list_tasks(status_filter: str = "", limit: int = 200) -> list:
@@ -182,10 +204,11 @@ def list_tasks(status_filter: str = "", limit: int = 200) -> list:
 
 def get_scheduler_status() -> dict:
     with _state_lock:
+        cfg = dict(_state["config"])
         return {
             "scheduler_alive": _scheduler_thread is not None and _scheduler_thread.is_alive(),
             "mirror_error": _mirror_error,
-            "config": dict(_state["config"]),
+            "config": _mask_config(cfg),
             "last_seen_sha": _state["last_seen_sha"],
             "last_hourly_check": _state["last_hourly_check"],
             "last_daily_run": _state["last_daily_run"],
@@ -262,23 +285,61 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
     cmd = ["git", "clone", url, _MIRROR_DIR]
     if use_proxy_flag:
         cmd = ["proxychains4"] + cmd
+    env = None
+    auth_tmp = None
+    token = (cfg.get("github_token") or "").strip()
+    if token:
+        env_up, auth_tmp = _git_auth_env(token)
+        env = dict(os.environ)
+        env.update(env_up)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
     except subprocess.TimeoutExpired:
         r = None
+    finally:
+        if auth_tmp:
+            shutil.rmtree(auth_tmp, ignore_errors=True)
     # if the clone did not produce a .git dir, remove the hollow remnant so
     # the next call retries instead of inheriting a broken state
     if not os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
-        try:
-            import shutil
-            shutil.rmtree(_MIRROR_DIR, ignore_errors=True)
-        except OSError:
-            pass
+        shutil.rmtree(_MIRROR_DIR, ignore_errors=True)
         _mirror_error = _mirror_error_from(
             (r.stderr if r is not None else "") or "", use_proxy_flag, "克隆")
         return False
     _mirror_error = ""
     return True
+
+
+def _git_auth_env(token: str, username: str = "x-access-token"):
+    """Build git askpass env so a token authenticates HTTPS without persisting it.
+
+    A token must never land in a process ARG (visible via `ps`) or a git config
+    (the mirror's .git/config keeps the remote URL). We write the token to a
+    0600 temp file and hand git a GIT_ASKPASS script that reads it only when git
+    asks for a password. Returns (env_updates, tmpdir); caller must rmtree then.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="vio-gitauth-")
+    tokenfile = os.path.join(tmpdir, "token")
+    script = os.path.join(tmpdir, "askpass.sh")
+    with open(tokenfile, "w", encoding="utf-8") as f:
+        f.write(token)
+    os.chmod(tokenfile, 0o600)
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            "  *Username*) printf '%s' \"$VIO_GIT_USER\" ;;\n"
+            "  *) cat \"$VIO_GIT_TOKEN_FILE\" ;;\n"
+            "esac\n"
+        )
+    os.chmod(script, 0o700)
+    env = {
+        "VIO_GIT_USER": username,
+        "VIO_GIT_TOKEN_FILE": tokenfile,
+        "GIT_ASKPASS": script,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    return env, tmpdir
 
 
 def _git(args: list, timeout: int = 120, net: bool = False,
@@ -289,6 +350,9 @@ def _git(args: list, timeout: int = 120, net: bool = False,
     use_proxy enabled the call is wrapped in proxychains4 so GitHub is
     reachable through the local proxy. use_proxy overrides that decision
     (None = follow the auto config), so a manual batch can pin its own.
+    When net=True and a github_token is configured, git is authenticated via
+    a throwaway askpass env so a private repo can be fetched (token never
+    persists to .git/config or a process arg).
 
     Returns rc=128 with a clear error if the mirror is not a git repo —
     otherwise git would walk up the directory tree and silently target the
@@ -297,15 +361,26 @@ def _git(args: list, timeout: int = 120, net: bool = False,
     if not os.path.isdir(os.path.join(_MIRROR_DIR, ".git")):
         return 128, "", f"mirror is not a git repo: {_MIRROR_DIR} (clone may have failed — check network / use_proxy)"
     cmd = ["git", "-C", _MIRROR_DIR] + args
+    env = None
+    auth_tmp = None
+    if net:
+        token = (get_config().get("github_token") or "").strip()
+        if token:
+            env_up, auth_tmp = _git_auth_env(token)
+            env = dict(os.environ)
+            env.update(env_up)
     if net and (get_config().get("use_proxy", False) if use_proxy is None else use_proxy):
         cmd = ["proxychains4"] + cmd
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
     except FileNotFoundError:
         return 127, "", f"command not found: {cmd[0]}"
+    finally:
+        if auth_tmp:
+            shutil.rmtree(auth_tmp, ignore_errors=True)
 
 
 def mirror_head_sha() -> str:

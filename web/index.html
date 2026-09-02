@@ -219,6 +219,28 @@
   </div>
 </div>
 
+<!-- ============================ Git 访问权限 ============================ -->
+<div id="git-token-modal" class="modal hidden">
+  <div class="modal-card" style="width: 520px;">
+    <div class="modal-head"><span>配置 Git 访问权限</span><button id="git-token-close" class="small">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-bottom:10px; line-height:1.6;">
+        用于拉取 GitHub 上的 drobotics_vio 源码（仅 clone/fetch）。建议用
+        <b>Fine-grained PAT</b>：Repository access 选 <b>Only this repo</b>、
+        Permissions 只给 <b>Contents: Read</b> —— 这样即便泄露也只能读这一个仓库。
+        token 不会回显，只保存在该平台。
+      </p>
+      <label class="field"><span>GitHub Token</span><input id="git-token-input" type="password" autocomplete="off" placeholder="不可回显，粘贴你的 token"></label>
+      <div id="git-token-save-status" class="status" style="min-height:18px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button id="git-token-clear" class="small danger">清除已保存权限</button>
+      <span style="flex:1;"></span>
+      <button id="git-token-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============================ 板子管理 ============================ -->
 <section id="tab-boards" class="tab">
   <div class="row">
@@ -417,7 +439,12 @@
               <label class="bt-inline-check"><input type="checkbox" id="auto-build-enabled" checked><span>交叉编译（禁用=复用板端已装 VIO）</span></label>
               <label class="bt-inline-check" title="勾选后 git clone/fetch 通过 proxychains4 走本机代理（GitHub 直连不通时启用）"><input type="checkbox" id="auto-use-proxy"><span>git 走代理 (proxychains4)</span></label>
             </div>
-            <label class="field"><span>GitHub URL</span><input id="auto-github-url" placeholder="https://github.com/D-Robotics/drobotics_vio.git"></label>
+            <label class="field"><span>GitHub URL</span>
+              <span class="branch-wrap">
+                <input id="auto-github-url" placeholder="https://github.com/D-Robotics/drobotics_vio.git">
+                <button id="auto-git-token-btn" class="small" title="配置 Git 访问权限（只读 token，仅用于拉取代码）">配置 Git 权限</button>
+              </span>
+            </label>
             <label class="field"><span>分支</span>
               <span class="branch-wrap">
                 <select id="auto-branch"></select>
@@ -535,6 +562,6 @@
 </section>
 
 <script src="vendor/uplot.iife.min.js"></script>
-<script src="app.js?v=158"></script>
+<script src="app.js?v=159"></script>
 </body>
 </html>

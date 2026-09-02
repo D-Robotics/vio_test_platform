@@ -766,7 +766,8 @@ def api_auto_status():
 
 @app.get("/api/auto/config")
 def api_auto_config_get():
-    return auto_test.get_config()
+    # the token is write-only: public_config strips it and reports presence only
+    return auto_test.public_config()
 
 
 class AutoConfigBody(BaseModel):
@@ -783,6 +784,7 @@ class AutoConfigBody(BaseModel):
     build_cmd: str | None = None
     board_install_path: str | None = None
     launch_script_override: str | None = None
+    github_token: str | None = None
 
 
 @app.put("/api/auto/config")
