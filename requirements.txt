@@ -6,3 +6,4 @@ mcap-ros2-support
 pyyaml
 pillow
 numpy
+python-multipart
