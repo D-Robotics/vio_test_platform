@@ -313,6 +313,8 @@ def api_boards():
 
 @app.post("/api/boards")
 def api_board_add(b: BoardBody):
+    if not boards.is_valid_ip(b.ip):
+        raise HTTPException(400, f"不是合法的 IP 地址：{b.ip}（例：192.168.1.10）")
     # A board must be a real X5 test board: refuse to add it unless root/root SSH
     # login (or the supplied creds) actually works. Otherwise we'd register a
     # non-test node that later hangs every poll/run.
@@ -337,6 +339,8 @@ def api_board_del(ip: str):
 
 @app.post("/api/boards/{ip}/test")
 def api_board_test(ip: str):
+    if not boards.is_valid_ip(ip):
+        raise HTTPException(400, f"不是合法的 IP 地址：{ip}（例：192.168.1.10）")
     return boards.test_board(ip)
 
 

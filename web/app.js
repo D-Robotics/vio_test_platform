@@ -21,6 +21,12 @@ function fmtBytes(n) {
   return n + " B";
 }
 
+function isValidIPv4(s) {
+  const p = String(s).trim().split(".");
+  if (p.length !== 4) return false;
+  return p.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255);
+}
+
 /* ------------------------------- tabs ------------------------------- */
 $$(".tab-btn").forEach((b) =>
   b.addEventListener("click", () => {
@@ -1003,6 +1009,7 @@ $("#bd-del-sel")?.addEventListener("click", async () => {
 $("#bd-add").addEventListener("click", async () => {
   const ip = $("#bd-ip").value.trim();
   if (!ip) return;
+  if (!isValidIPv4(ip)) return popupAlert(`不是合法的 IPv4 地址：${ip}（例：192.168.1.10）`);
   const btn = $("#bd-add");
   const orig = btn.textContent;
   btn.disabled = true;

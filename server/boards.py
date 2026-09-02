@@ -1,4 +1,5 @@
 """Board registry (JSON file) + paramiko SSH helper."""
+import ipaddress
 import json
 import os
 import threading
@@ -8,6 +9,21 @@ import paramiko
 from . import config
 
 _lock = threading.Lock()
+
+
+def is_valid_ip(ip: str) -> bool:
+    """True only for a syntactically valid IPv4/IPv6 literal (e.g. 192.168.1.10).
+
+    Rejects junk like "111111.1111.11111.111" or bare hostnames, so callers can
+    fail fast instead of waiting on a DNS/SSH timeout.
+    """
+    if not ip or isinstance(ip, str) is False:
+        return False
+    try:
+        ipaddress.ip_address(ip.strip())
+        return True
+    except ValueError:
+        return False
 
 
 def _load() -> list:
