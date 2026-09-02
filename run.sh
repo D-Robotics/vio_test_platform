@@ -1,29 +1,42 @@
 #!/usr/bin/env bash
 # Self-provisioning launcher for the test_platform web service.
 #
-#   bash run.sh            # ensure dirs + deps (py + ffmpeg + NFS), then start on :1234
-#   bash run.sh --check    # report missing deps/dirs, exit non-zero if any (no install, no start)
-#   bash run.sh --install  # install all missing deps, then exit (no start)
+#   bash run.sh                     # ensure dirs + deps (py + ffmpeg + NFS), then start on :1234
+#   bash run.sh --check             # report missing deps/dirs, exit non-zero if any (no install, no start)
+#   bash run.sh --install           # install all missing deps, then exit (no start)
+#   bash run.sh --data-root=/d --port=1235   # override dataset root / port on the CLI
 #
-# Env overrides:
-#   PORT=1234         service port (default 1234)
-#   DATA_ROOT=/path   dataset root exported to boards via NFS (default below)
-#   PYTHON=python3    interpreter to use (default python3)
-#   SKIP_DEPS=1       check-but-don't-install python deps (warn and proceed)
+# Overrides (CLI args win over env):
+#   --port=N         service port (default 1234)
+#   --data-root=/p   dataset root exported to boards via NFS (default below)
+#   --python=PY      interpreter to use (default python3)
+#   PORT, DATA_ROOT, PYTHON, SKIP_DEPS are the equivalent env vars; SKIP_DEPS=1
+#   check-but-don't-install python deps (warn and proceed).
 #
 # Required system deps are auto-installed via apt when missing: ffmpeg (mp4
 # recording) and nfs-kernel-server + a DATA_ROOT export (boards mount the
 # datasets). If that needs a password, the script prompts interactively.
 set -e
 
+die() { printf '[test_platform][ERROR] %s\n' "$*" >&2; exit 1; }
+
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
+
+# CLI args override env (e.g. `bash run.sh --data-root=/d --port=1235`).
+for arg in "$@"; do
+  case "$arg" in
+    --port=*)        PORT="${arg#--port=}" ;;
+    --data-root=*)   DATA_ROOT="${arg#--data-root=}" ;;
+    --python=*)      PYTHON="${arg#--python=}" ;;
+    --check|--install) ;;               # handled below
+    *) die "unknown argument: $arg (expected --port=, --data-root=, --python=, --check, --install)" ;;
+  esac
+done
 
 export PORT="${PORT:-1234}"
 export DATA_ROOT="${DATA_ROOT:-/home/hobot/work/cc_ws/tros_ws}"
 PY="${PYTHON:-python3}"
-
-die() { printf '[test_platform][ERROR] %s\n' "$*" >&2; exit 1; }
 
 # ------------------------------------------------------------------ interpreter
 "$PY" --version >/dev/null 2>&1 || die "no usable interpreter: $PY (set PYTHON=...)"
@@ -36,6 +49,32 @@ mkdir -p "$DIR/results" "$DIR/state"
 # ------------------------------------------------------------------ helpers
 import_ok() { "$PY" -c "import sys; sys.path.insert(0, '$DIR/vendor_libs'); import $1" >/dev/null 2>&1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Re-running the launcher must not fail with "address already in use". Stop any
+# process already listening on $PORT before we bind. We key off the LISTENING
+# SOCKET (via ss) rather than a command-line pattern, so we never match this
+# script's own shell or an unrelated server that merely mentions a matching arg.
+stop_existing() {
+  local port_pids pid
+  port_pids=$(ss -ltnp 2>/dev/null \
+    | grep -E "[:.]${PORT}[[:space:]]" \
+    | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+  for pid in $port_pids; do
+    echo "[test_platform] stopping existing pid $pid on :$PORT"
+    kill "$pid" 2>/dev/null || true
+  done
+  if [ -n "$port_pids" ]; then
+    sleep 1
+    # second pass: anything still holding the port gets SIGKILL (e.g. a hung proc)
+    port_pids=$(ss -ltnp 2>/dev/null \
+      | grep -E "[:.]${PORT}[[:space:]]" \
+      | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+    for pid in $port_pids; do
+      [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 1
+  fi
+}
 
 # Run a privileged command: as root directly; else passwordless sudo; else, on a
 # TTY, `sudo` (prompts for the password); else fail with a clear message.
@@ -153,5 +192,6 @@ if [ "$MODE" = "install" ]; then
   exit 0
 fi
 
+stop_existing
 echo "[test_platform] starting  http://0.0.0.0:$PORT  DATA_ROOT=$DATA_ROOT"
 exec "$PY" server/main.py
