@@ -1003,12 +1003,23 @@ $("#bd-del-sel")?.addEventListener("click", async () => {
 $("#bd-add").addEventListener("click", async () => {
   const ip = $("#bd-ip").value.trim();
   if (!ip) return;
+  const btn = $("#bd-add");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "正在添加中…";
+  showToast(`正在添加板子 ${ip}：校验 SSH 登录，请稍候…`, 6000);
   try {
     await api("/api/boards", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ip, note: $("#bd-note").value.trim() }) });
     $("#bd-ip").value = ""; $("#bd-note").value = "";
     loadBoards();
-  } catch (e) { alert(e.message); }
+    showToast(`板子 ${ip} 添加成功 ✓`, 4000);
+  } catch (e) {
+    popupAlert(`添加板子 ${ip} 失败：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 });
 
 /* =============================== 回测 =============================== */
