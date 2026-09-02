@@ -1594,7 +1594,7 @@ $("#bt-deploy").addEventListener("click", async () => {
   try {
     const r = await api(`/api/boards/${ip}/deploy`, { method: "POST" });
     if (r.ok) {
-      alert(`部署成功 ✓\n\n板端路径： ${r.board_path || ""}\n${r.detail || ""}\n\n之后启动回测会使用这份自编译的 VIO（含 ov_web）。`);
+      alert(`部署成功 ✓\n\n板端路径： ${r.board_path || ""}\n构建来源： ${r.source || "镜像仓库"}\n${r.detail || ""}\n\n之后启动回测会使用这份自编译的 VIO（含 ov_web）。`);
     } else {
       alert("部署失败\n\n" + (r.detail || "未知错误"));
     }

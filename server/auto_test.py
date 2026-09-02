@@ -49,7 +49,7 @@ _DEFAULT_BUILD_CMD = f"bash {_BUILD_SCRIPT} . {_BUILD_EXTRAS}"
 _DEFAULT_CONFIG = {
     "enabled": False,
     "github_url": "https://github.com/D-Robotics/drobotics_vio.git",
-    "branch": "master",
+    "branch": "develop",
     "hourly_check": True,
     "daily_time": "02:00",
     "board_ip": "",
@@ -65,6 +65,8 @@ _DEFAULT_CONFIG = {
 
 # in-memory state
 _state_lock = threading.Lock()
+# serialises mirror fetch/refresh so a slow GitHub never races a second one
+_fetch_lock = threading.Lock()
 _state = {"config": dict(_DEFAULT_CONFIG), "tasks": [], "last_seen_sha": "",
            "last_hourly_check": "", "last_daily_run": "", "next_hourly_check": "",
            "next_daily_run": ""}
@@ -104,6 +106,9 @@ def _load_state():
             # cross-build runs in docker with the board sysroot
             if cfg.get("build_cmd") == "build-tros-x5 drobotics_vio":
                 cfg["build_cmd"] = _DEFAULT_BUILD_CMD
+            # migrate: the default track branch is develop (was master)
+            if cfg.get("branch") == "master":
+                cfg["branch"] = "develop"
             _state = {
                 "config": cfg,
                 "tasks": loaded.get("tasks", []),
@@ -260,6 +265,54 @@ def mirror_head_sha() -> str:
     return out.strip() if rc == 0 else ""
 
 
+def _repo_head_sha(repo_dir: str) -> str:
+    """HEAD commit of an arbitrary git repo ("" if not a repo / bare)."""
+    repo_dir = os.path.abspath(repo_dir or "")
+    if not repo_dir or not os.path.isdir(os.path.join(repo_dir, ".git")):
+        return ""
+    try:
+        r = subprocess.run(["git", "-C", repo_dir, "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _manual_vio_checkout() -> str:
+    """The drobotics_vio checkout that hosts this platform (its parent dir).
+
+    A developer who cross-builds manually with build_x5_docker.sh lands
+    install/ in the real source tree. This platform usually lives inside that
+    tree, so the deploy can use the manual build when the mirror never built.
+    Returns "" when there is no such checkout with an install/.
+    """
+    parent = os.path.dirname(config.REPO_DIR)
+    if parent and os.path.isdir(os.path.join(parent, "install")):
+        return parent
+    return ""
+
+
+def _locate_install() -> tuple:
+    """Return (install_dir, label, sha) for the best deployable build.
+
+    Candidates are the auto-pipeline mirror and the manual drobotics_vio
+    checkout; the newest install/ wins so a fresh manual build is deployable
+    even when the mirror has only a stale one. Returns (None, "", "") if neither
+    exists.
+    """
+    cands = []
+    mir = os.path.join(_MIRROR_DIR, "install")
+    if os.path.isdir(mir):
+        cands.append((os.path.getmtime(mir), mir, "镜像仓库"))
+    man = os.path.join(_manual_vio_checkout(), "install")
+    if os.path.isdir(man):
+        cands.append((os.path.getmtime(man), man, "本地手动构建"))
+    if not cands:
+        return None, "", ""
+    _, d, label = max(cands, key=lambda c: c[0])
+    return d, label, _repo_head_sha(os.path.dirname(d))
+
+
 def fetch_new_commits() -> dict:
     """Fetch origin and list new commits since last_seen_sha. Enqueue tasks.
 
@@ -274,7 +327,7 @@ def fetch_new_commits() -> dict:
     """
     _ensure_mirror()
     cfg = get_config()
-    branch = cfg.get("branch", "master")
+    branch = cfg.get("branch", "develop")
     rc, out, err = _git(["fetch", "origin", branch, "--tags", "--prune"], timeout=300, net=True)
     if rc != 0:
         return {"fetched": False, "new_commits": [], "enqueued": 0,
@@ -394,7 +447,7 @@ def _enqueue_daily() -> int:
     the current origin HEAD, tagged source="daily" (numbered daily-test-N)."""
     _ensure_mirror()
     cfg = get_config()
-    branch = cfg.get("branch", "master")
+    branch = cfg.get("branch", "develop")
     rc, out, _ = _git(["log", f"origin/{branch}", "-n", "1", "--format=%H|%ci|%an|%s"])
     if rc != 0 or not out.strip():
         return 0
@@ -421,7 +474,7 @@ def enqueue_manual(commit: str, datasets: list, experiments: list,
     if rc != 0:
         # try fetching
         cfg = get_config()
-        _git(["fetch", "origin", cfg.get("branch", "master"), "--tags", "--prune"], timeout=300, net=True)
+        _git(["fetch", "origin", cfg.get("branch", "develop"), "--tags", "--prune"], timeout=300, net=True)
         rc, out, _ = _git(["log", commit, "-n", "1", "--format=%H|%ci|%an|%s"])
         if rc != 0:
             return {"ok": False, "detail": f"commit {commit} not found in mirror"}
@@ -449,7 +502,7 @@ def list_known_commits(limit: int = 100, branch: str = "") -> list:
     follows the selected code branch.
     """
     _ensure_mirror()
-    ref = f"origin/{branch or get_config().get('branch', 'master')}"
+    ref = f"origin/{branch or get_config().get('branch', 'develop')}"
     rc, out, _ = _git(["log", ref, "-n", str(limit),
                        "--format=%H|%h|%ci|%an|%s"])
     if rc != 0:
@@ -467,12 +520,14 @@ def list_known_commits(limit: int = 100, branch: str = "") -> list:
 def list_remote_branches(fetch: bool = False) -> list:
     """Return remote branch names from the mirror (origin/<name>, no HEAD symref).
 
-    fetch=True refreshes origin first (network op, honours use_proxy); the
-    default reads the cached refs so the UI stays fast.
+    fetch=True refreshes origin in the background (network op, honours
+    use_proxy) so a slow/flaky GitHub never stalls the dropdown; the list below
+    serves whatever refs we already have. The default reads the cached refs so
+    the UI stays fast.
     """
     _ensure_mirror()
     if fetch:
-        _git(["fetch", "origin", "--prune"], timeout=300, net=True)
+        _background_refresh_branches()
     rc, out, _ = _git(["for-each-ref",
                        "--format=%(refname:short)",
                        "refs/remotes/origin/"])
@@ -487,6 +542,39 @@ def list_remote_branches(fetch: bool = False) -> list:
             name = name[len("origin/"):]
         branches.append(name)
     return sorted(branches)
+
+
+def _background_refresh_branches(timeout: int = 120):
+    """Fetch origin refs off the request thread; never block the caller.
+
+    GitHub is frequently slow/unreachable here, so a synchronous `git fetch`
+    would stall the branch dropdown for up to several minutes. This returns
+    immediately and lets the fetch retire in a daemon thread (the next
+    list_remote_branches call serves the freshly-updated refs).
+    """
+    def _run():
+        with _fetch_lock:
+            _git(["fetch", "origin", "--prune"], timeout=timeout, net=True)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def bootstrap_mirror():
+    """Called on service start: clone the mirror and prime the branch refs.
+
+    Runs in a background thread so boot is never stalled by a slow GitHub — the
+    service binds immediately and pulls the code concurrently. Ensures code is
+    present (default branch fetched) so branch dropdowns and auto backtests
+    don't have to wait for a first-use fetch. Best-effort; never raises.
+    """
+    def _run():
+        try:
+            with _fetch_lock:
+                _ensure_mirror()
+                branch = get_config().get("branch", "develop")
+                _git(["fetch", "origin", branch, "--tags", "--prune"], timeout=300, net=True)
+        except Exception:  # noqa: BLE001
+            pass  # best-effort; the on-demand paths retry
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # -----------------------------------------------------------------------------
@@ -516,21 +604,26 @@ def _run_build(commit: str) -> tuple:
     return True, tail
 
 
-def _deploy_install(ip: str) -> tuple:
+def _deploy_install(ip: str, install_dir: str = None, sha: str = None) -> tuple:
     """Tar install/ on host, SFTP to board, extract into board_install_path.
 
+    install_dir/sha default to the best available source (mirror or manual).
     Returns (ok, detail).
     """
     cfg = get_config()
-    install_dir = os.path.join(_MIRROR_DIR, "install")
+    if not install_dir:
+        install_dir, _, sha = _locate_install()
+        if not install_dir:
+            return False, "没有可部署的构建产物（镜像仓库与本地手动构建都没有 install/）"
     if not os.path.isdir(install_dir):
         return False, f"no install/ dir at {install_dir} (did build run?)"
     board_path = cfg.get("board_install_path", config.BOARD_INSTALL_DIR)
     staging = f"{config.BOARD_BASE}/_deploy"  # NOT /tmp (tmpfs, lost on reboot)
-    tar_path = os.path.join(_MIRROR_DIR, ".install.tar.gz")
+    src_root = os.path.dirname(os.path.abspath(install_dir))
+    tar_path = os.path.join(src_root, ".install.tar.gz")
     try:
         r = subprocess.run(
-            ["tar", "-czf", tar_path, "-C", _MIRROR_DIR, "install"],
+            ["tar", "-czf", tar_path, "-C", src_root, "install"],
             capture_output=True, text=True, timeout=300,
         )
         if r.returncode != 0:
@@ -552,9 +645,9 @@ def _deploy_install(ip: str) -> tuple:
                       timeout=180)
             if r["rc"] != 0:
                 return False, f"extract failed: {r['err'] or r['out']}"
-            # version stamp — ensure_deployed compares it against the mirror HEAD
-            # and skips re-deploying identical code
-            sha = mirror_head_sha()
+            # version stamp — ensure_deployed compares it against the source
+            # HEAD and skips re-deploying identical code
+            sha = sha or _repo_head_sha(src_root)
             if sha:
                 s.run(f"echo {sha} > {board_path}/.platform_stamp", timeout=15)
     except Exception as e:  # noqa: BLE001
@@ -563,38 +656,41 @@ def _deploy_install(ip: str) -> tuple:
 
 
 def deploy_to_board(ip: str) -> dict:
-    """Public wrapper: deploy the mirror's built install/ to the board."""
-    install_dir = os.path.join(_MIRROR_DIR, "install")
-    if not os.path.isdir(install_dir):
+    """Public wrapper: deploy the best available built install/ to the board."""
+    install_dir, label, sha = _locate_install()
+    if not install_dir:
         return {"ok": False,
-                "detail": "镜像仓库还没有构建产物（install/ 不存在）。\n请先在「自动」面板跑一次构建，或手动交叉编译后放入。"}
-    ok, detail = _deploy_install(ip)
-    return {"ok": ok, "detail": detail, "board_path": get_config().get("board_install_path")}
+                "detail": ("镜像仓库还没有构建产物（install/ 不存在），无法自动部署。\n"
+                           "请先在「自动」面板跑一次构建，或用指定分支启动批次触发构建+部署；\n"
+                           "或在本地手动交叉编译 drobotics_vio（该平台的上一级目录）。")}
+    ok, detail = _deploy_install(ip, install_dir, sha)
+    return {"ok": ok, "detail": detail, "source": label,
+            "board_path": get_config().get("board_install_path")}
 
 
 def ensure_deployed(ip: str) -> tuple:
-    """Deploy the mirror's built install/ to the board unless already current.
+    """Deploy the best available built install/ to the board unless already current.
 
     Called before running a backtest so users never have to click 部署 manually.
     The board carries a `.platform_stamp` (commit sha) written by
-    `_deploy_install`; when it matches the mirror HEAD the transfer is skipped.
+    `_deploy_install`; when it matches the source HEAD the transfer is skipped.
     Returns (ok, detail).
     """
-    install_dir = os.path.join(_MIRROR_DIR, "install")
-    if not os.path.isdir(install_dir):
+    install_dir, label, sha = _locate_install()
+    if not install_dir:
         return False, ("镜像仓库还没有构建产物（install/ 不存在），无法自动部署。"
-                       "请先在「自动」面板跑一次构建，或用指定分支启动批次触发构建+部署。")
+                       "请先在「自动」面板跑一次构建，或用指定分支启动批次触发构建+部署，"
+                       "或手动交叉编译 drobotics_vio（该平台的上一级目录）。")
     board_path = get_config().get("board_install_path", config.BOARD_INSTALL_DIR)
-    sha = mirror_head_sha()
     if sha:
         try:
             with Ssh(ip, timeout=10) as s:
                 r = s.run(f"cat {board_path}/.platform_stamp 2>/dev/null", timeout=15)
             if r["rc"] == 0 and r["out"].strip() == sha:
-                return True, f"板端已是最新（commit {sha[:10]}），跳过部署"
+                return True, f"板端已是最新（commit {sha[:10]}，{label}），跳过部署"
         except Exception:  # noqa: BLE001
             pass  # stamp unreadable → deploy anyway
-    return _deploy_install(ip)
+    return _deploy_install(ip, install_dir, sha)
 
 
 def _run_one_task(task: dict) -> None:

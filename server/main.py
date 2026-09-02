@@ -490,9 +490,10 @@ def api_mount(ip: str):
 def api_deploy(ip: str):
     """Deploy the platform's own cross-built VIO install to the board.
 
-    Source: the auto-test mirror's install/ (built from the configured
-    branch/commit). Destination: config.BOARD_INSTALL_DIR on the board —
-    the launch script sources exactly that, never /userdata/demo/install.
+    Source: the newest install/ available — the auto-test mirror's build, or a
+    manual cross-build in the platform's parent checkout (whichever is newer).
+    Destination: config.BOARD_INSTALL_DIR on the board — the launch script
+    sources exactly that, never /userdata/demo/install.
     """
     try:
         return auto_test.deploy_to_board(ip)
@@ -845,6 +846,9 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 os.makedirs(config.FRAME_CACHE_DIR, exist_ok=True)
 # start the auto-test scheduler (hourly fetch + daily run + manual kicks)
 auto_test.start_scheduler()
+# clone the mirror + fetch the default branch so code is ready immediately
+# (branch dropdowns and auto backtests shouldn't wait for a first-use fetch)
+auto_test.bootstrap_mirror()
 app.mount("/results", StaticFiles(directory=batch.RESULTS_DIR, html=False), name="results")
 # Static mount for frame cache: serves video.mp4 + JPEGs with full HTTP Range
 # support so the native <video> element can seek smoothly without per-frame
