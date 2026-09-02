@@ -6,6 +6,7 @@
 
 ```bash
 bash test_platform/run.sh              # 自动检查/补装依赖 + 启动，http://localhost:1234
+bash test_platform/run.sh --hiden      # 后台启动（nohup+disown），关终端不掉服务；日志 /tmp/test_platform_<PORT>.log
 bash test_platform/run.sh --check      # 只检查依赖/目录，不启动
 bash test_platform/run.sh --install    # 只补装依赖，不启动
 ```

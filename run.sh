@@ -2,11 +2,14 @@
 # Self-provisioning launcher for the test_platform web service.
 #
 #   bash run.sh                     # ensure dirs + deps (py + ffmpeg + NFS), then start on :1234
+#   bash run.sh --hiden             # start in the background (nohup+disown): closing the
+#                                   #   terminal does NOT stop the service; log in /tmp/test_platform_<PORT>.log
 #   bash run.sh --check             # report missing deps/dirs, exit non-zero if any (no install, no start)
 #   bash run.sh --install           # install all missing deps, then exit (no start)
 #   bash run.sh --data-root=/d --port=1235   # override dataset root / port on the CLI
 #
 # Overrides (CLI args win over env):
+#   --hiden          background run (alias --hidden); survives console close
 #   --port=N         service port (default 1234)
 #   --data-root=/p   dataset root exported to boards via NFS (default below)
 #   --python=PY      interpreter to use (default python3)
@@ -29,8 +32,9 @@ for arg in "$@"; do
     --port=*)        PORT="${arg#--port=}" ;;
     --data-root=*)   DATA_ROOT="${arg#--data-root=}" ;;
     --python=*)      PYTHON="${arg#--python=}" ;;
+    --hiden|--hidden) HIDEN=1 ;;        # 后台运行：关终端不掉服务
     --check|--install) ;;               # handled below
-    *) die "unknown argument: $arg (expected --port=, --data-root=, --python=, --check, --install)" ;;
+    *) die "unknown argument: $arg (expected --hiden, --port=, --data-root=, --python=, --check, --install)" ;;
   esac
 done
 
@@ -193,5 +197,15 @@ if [ "$MODE" = "install" ]; then
 fi
 
 stop_existing
-echo "[test_platform] starting  http://0.0.0.0:$PORT  DATA_ROOT=$DATA_ROOT"
-exec "$PY" server/main.py
+if [ "${HIDEN:-0}" = "1" ]; then
+  # 后台运行：nohup 忽略 SIGHUP + disown 脱离 shell 任务表，关终端不掉服务。
+  LOG="/tmp/test_platform_${PORT}.log"
+  echo "[test_platform] starting (background)  http://0.0.0.0:$PORT  DATA_ROOT=$DATA_ROOT"
+  nohup "$PY" server/main.py >"$LOG" 2>&1 &
+  BGPID=$!
+  disown
+  echo "[test_platform] pid=$BGPID  log=$LOG  （关闭终端不影响服务；重跑本脚本即优雅重启/停止）"
+else
+  echo "[test_platform] starting  http://0.0.0.0:$PORT  DATA_ROOT=$DATA_ROOT"
+  exec "$PY" server/main.py
+fi
