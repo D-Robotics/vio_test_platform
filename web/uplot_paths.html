@@ -1,0 +1,20 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/uplot.iife.min.js"></script>
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">uplot_paths.html · uPlot paths.linear 测试</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script>
+const t = Array.from({length:100},(_,i)=>i*0.1);
+const data=[t, t.map((x,i)=>[x,Math.sin(i*0.2)]), t.map((x,i)=>[x,Math.cos(i*0.2)])];
+const d=document.createElement('div'); d.style.cssText='width:480px;height:200px';
+document.body.appendChild(d);
+new uPlot({width:480,height:200,scales:{x:{time:false}},
+  series:[{},{stroke:'#ff8800',width:2,paths:uPlot.paths.linear},{stroke:'#44eecc',width:2,paths:uPlot.paths.linear}]},
+  data, d);
+window._scan=()=>{const c=d.querySelector('canvas');
+const img=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+let o=0,cy=0;for(let i=0;i<img.length;i+=4){const r=img[i],g=img[i+1],b=img[i+2];
+if(r>200&&g>80&&g<170&&b<70)o++;if(r<130&&g>180&&b>180)cy++;}
+return 'orange='+o+' cyan='+cy;};
+</script></body></html>

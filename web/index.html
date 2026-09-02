@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>VIO 数据管理与回测平台</title>
+<link rel="stylesheet" href="vendor/uplot.min.css">
+<link rel="stylesheet" href="style.css?v=128">
+</head>
+<body>
+<header>
+  <span class="logo">VIO</span>
+  <h1>VIO 数据管理与回测平台</h1>
+  <nav>
+    <button class="tab-btn active" data-tab="datasets">📁 数据集</button>
+    <button class="tab-btn" data-tab="boards">🔌 板子管理</button>
+    <button class="tab-btn" data-tab="backtest">▶ 回测</button>
+    <button class="tab-btn" data-tab="stats">📊 统计</button>
+  </nav>
+</header>
+
+<!-- ============================ 数据集 ============================ -->
+<section id="tab-datasets" class="tab active">
+  <div class="split">
+    <div class="pane left">
+      <div class="pane-head">
+        <span>数据集 <b id="ds-count">0</b></span>
+        <span>
+          <button id="btn-add-ds" class="small primary">＋ 添加数据</button>
+          <button id="btn-refresh-ds" class="small">↻ 刷新</button>
+        </span>
+      </div>
+      <ul id="ds-list" class="ds-list"></ul>
+    </div>
+    <div class="pane right" id="ds-detail">
+      <div class="sub-tabs">
+        <button class="sub-tab-btn active" data-sub="preview">数据预览</button>
+        <button class="sub-tab-btn" data-sub="config">配置编辑</button>
+      </div>
+      <div class="sub-pane active" id="sub-pane-preview">
+        <p class="hint">选择左侧数据集查看 bag 信息与数据预览（image / imu / tf / odom / gps）。</p>
+      </div>
+      <div class="sub-pane" id="sub-pane-config">
+        <div class="row">
+          <select id="cfg-file"></select>
+          <button id="cfg-load">读取</button>
+          <button id="cfg-validate">校验</button>
+          <button id="cfg-save" class="primary">保存</button>
+          <span id="cfg-status" class="status"></span>
+        </div>
+        <textarea id="cfg-text" spellcheck="false" placeholder="先选择数据集与配置文件"></textarea>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 实验编辑弹窗 ============================ -->
+<div id="exp-modal" class="modal hidden">
+  <div class="modal-card" style="width: 980px;">
+    <div class="modal-head">
+      <span id="exp-title">实验管理</span>
+      <button id="exp-close" class="small">✕</button>
+    </div>
+    <div class="modal-body" style="gap: 10px;">
+      <div class="row" style="margin: 0; flex-wrap: wrap; gap: 8px;">
+        <span class="hint">基线来源</span>
+        <select id="exp-base-ds" style="flex: 0 1 240px;"></select>
+        <select id="exp-base-file" style="flex: 0 1 220px;"></select>
+        <button id="exp-refresh-base" class="small">加载</button>
+        <span class="hint" style="margin-left: auto;">改动 <b id="exp-toggled-count">0</b> 个 key</span>
+      </div>
+      <div class="row" style="margin: 0; gap: 8px;">
+        <input id="exp-filter" placeholder="搜索 key（不区分大小写）" style="flex: 1;">
+        <button id="exp-clear-filter" class="small">清空搜索</button>
+      </div>
+      <div class="exp-list-wrap">
+        <div class="exp-list-head">
+          <span style="flex: 0 0 30px;">✓</span>
+          <span style="flex: 1;">key</span>
+          <span style="flex: 1;" id="exp-col-base">基线值</span>
+          <span style="flex: 1;" id="exp-col-ovr">覆盖值</span>
+        </div>
+        <div id="exp-list" class="exp-list"></div>
+      </div>
+      <div style="display: flex; flex-direction: column; min-height: 110px;">
+        <div class="pane-head" style="position: static;"><span id="exp-preview-title">实验片段预览（deep-merge 到基线）</span></div>
+        <textarea id="exp-text" readonly spellcheck="false" style="flex: 1; min-height: 90px; font: 12px/1.45 Consolas, monospace; resize: vertical;" placeholder="改动的 key 会在此显示 yaml"></textarea>
+      </div>
+      <div id="exp-status" class="status"></div>
+    </div>
+    <div class="modal-foot">
+      <label class="field modal-foot-field">
+        <span>实验名（留空则按改动 key 自动生成）</span>
+        <input id="exp-name-input" placeholder="如 my_exp_01（字母/数字/_/-）">
+      </label>
+      <label class="bt-inline-check modal-foot-check" title="勾选后：即使所有覆盖值与当前基线来源完全一致也允许保存（用于把值钉住——对本 bag 是等值，对其他 bag 仍是覆盖）">
+        <input type="checkbox" id="exp-force-save"><span>强制保存</span>
+      </label>
+      <button id="exp-del" class="danger">删除当前实验</button>
+      <button id="exp-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 上传弹窗 ============================ -->
+<div id="upload-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span>添加数据</span>
+      <button id="upload-close" class="small">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="field">
+        <span>父目录名称</span>
+        <input id="upload-parent" list="parent-list" placeholder="如 vbot_data，留空则放 ./">
+        <datalist id="parent-list"></datalist>
+      </label>
+      <label class="field">
+        <span>数据集名称</span>
+        <input id="upload-name" placeholder="选文件夹后自动填充，可改">
+      </label>
+      <label class="field">
+        <span>选择数据集文件夹</span>
+        <input id="upload-folder" type="file" webkitdirectory directory multiple>
+      </label>
+      <div id="upload-check" class="upload-check">
+        <div class="check-row" data-check="ros2bag_vio">⊘ ros2bag_vio/</div>
+        <div class="check-row" data-check="stereo_auto_gen">⊘ stereo_auto_gen/</div>
+      </div>
+      <div id="upload-status" class="status"></div>
+    </div>
+    <div class="modal-foot">
+      <button id="upload-submit" class="primary">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 数据预览弹窗 ============================ -->
+<div id="ds-preview-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span>数据预览</span>
+      <button id="ds-preview-close" class="small">✕</button>
+    </div>
+    <div class="modal-body" id="ds-preview-modal-body"></div>
+  </div>
+</div>
+
+<!-- ============================ 启动脚本弹窗 ============================ -->
+<div id="launch-script-modal" class="modal hidden">
+  <div class="modal-card" style="width: 880px;">
+    <div class="modal-head">
+      <span>板端启动脚本 launch.sh</span>
+      <button id="launch-script-close" class="small">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="hint" style="margin-bottom: 6px;">
+        路径：板端 <code>/userdata/vio_backtest/runs/&lt;时间戳&gt;__&lt;实验组&gt;__&lt;数据集&gt;/launch.sh</code> · 打开后按当前选择（板子+数据集+实验组+offline_bag）预生成默认脚本，可编辑后保存为本次回测的 override。
+        <span id="launch-script-override-flag" class="hidden" style="color: var(--accent); margin-left: 8px;">● 已保存自定义脚本</span>
+      </div>
+      <textarea id="launch-script-text" spellcheck="false" style="width: 100%; min-height: 420px; font: 12px/1.45 Consolas, monospace; resize: vertical;"></textarea>
+    </div>
+    <div class="modal-foot">
+      <span id="launch-script-status" class="status"></span>
+      <button id="launch-script-reset">重置为默认</button>
+      <button id="launch-script-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="result-modal" class="modal hidden">
+  <div class="modal-card" style="width: 720px;">
+    <div class="modal-head">
+      <span>回测结果</span>
+      <button id="result-close" class="small">✕</button>
+    </div>
+    <div class="modal-body" id="result-modal-body"><span class="hint">加载中…</span></div>
+    <div class="modal-foot"><span class="hint" id="result-path"></span></div>
+  </div>
+</div>
+
+<div id="cfg-view-modal" class="modal hidden">
+  <div class="modal-card" style="width: 860px;">
+    <div class="modal-head">
+      <span id="cfg-view-title">配置内容</span>
+      <button id="cfg-view-close" class="small">✕</button>
+    </div>
+    <div class="modal-body"><textarea id="cfg-view-text" class="cfg-view-pre" readonly spellcheck="false" style="width:100%; box-sizing:border-box; min-height:420px; resize:vertical;"></textarea></div>
+    <div class="modal-foot">
+      <span class="hint" id="cfg-view-path"></span>
+      <span id="cfg-view-status" class="status"></span>
+    </div>
+  </div>
+</div>
+
+<!-- 日志/文本文件查看（只读弹窗，不提供下载） -->
+<!-- video 播放弹窗（不提供下载） -->
+<div id="video-view-modal" class="modal hidden">
+  <div class="modal-card" style="width: 1000px;">
+    <div class="modal-head">
+      <span id="video-view-title">video</span>
+      <button id="video-view-close" class="small">✕</button>
+    </div>
+    <div class="modal-body">
+      <video id="video-view-player" controls playsinline style="width:100%; max-height:72vh; background:#000;"></video>
+    </div>
+  </div>
+</div>
+
+<!-- 图片查看弹窗（轨迹图 / 预览图，页内展示不开新页；ESC 关闭） -->
+<div id="img-view-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="img-view-title">图片</span>
+      <button id="img-view-close" class="small">✕</button>
+    </div>
+    <div class="modal-body">
+      <img id="img-view-img" src="" alt="">
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 板子管理 ============================ -->
+<section id="tab-boards" class="tab">
+  <div class="row">
+    <input id="bd-ip" placeholder="板子 IP，如 192.168.1.15">
+    <input id="bd-note" placeholder="备注（可选）">
+    <button id="bd-add" class="primary">＋ 添加</button>
+  </div>
+  <table class="table" id="bd-table">
+    <thead><tr>
+      <th style="width:32px"><input type="checkbox" id="bd-sel-all" title="全选"></th>
+      <th>IP</th><th>备注</th><th>ping</th><th>状态</th><th>操作</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row" style="margin-top:8px">
+    <button id="bd-del-sel" class="danger" disabled>批量删除</button>
+  </div>
+</section>
+
+<!-- ============================ 回测 ============================ -->
+<section id="tab-backtest" class="tab">
+  <div class="sub-tabs">
+    <button class="sub-tab-btn active" data-sub="manual">手动回测</button>
+    <button class="sub-tab-btn" data-sub="auto">自动回测</button>
+    <button class="sub-tab-btn" data-sub="exp-config">实验配置</button>
+  </div>
+
+  <!-- ============ 手动回测 ============ -->
+  <div class="sub-pane active" id="sub-pane-manual">
+    <div id="bt-env-box" class="env-box hidden"></div>
+    <div class="manual-grid">
+      <aside class="sidebar" id="manual-sidebar">
+        <button class="sidebar-pin-btn" id="bt-sidebar-pin" title="固定/取消固定（取消后折叠到左侧）">📌</button>
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab-btn active" data-side="manual-data">数据</button>
+          <button class="sidebar-tab-btn" data-side="manual-config">配置</button>
+          <button class="sidebar-tab-btn" data-side="manual-exp">实验组</button>
+        </div>
+        <div class="sidebar-pane active" data-side-pane="manual-data">
+          <div class="sidebar-section flex-1">
+            <div class="sidebar-head">
+              <span>数据集（勾选后启动回测）</span>
+              <button id="bt-sel-toggle" class="small">全选</button>
+            </div>
+            <div class="sidebar-body"><div id="bt-ds-list" class="ds-list"></div></div>
+          </div>
+        </div>
+        <div class="sidebar-pane" data-side-pane="manual-config">
+          <div class="sidebar-form">
+            <label class="field"><span>板子</span><select id="bt-board"></select></label>
+            <label class="field"><span>代码分支</span><select id="bt-branch" title="选择分支 = 先在主机交叉编译该分支并部署到板端，再开始回测"><option value="">不构建（用板端现有版本）</option></select></label>
+            <label class="field"><span>VIO commit</span><select id="bt-commit" title="默认当前代码 = 板端已装版本"><option value="">当前代码 (HEAD)</option></select></label>
+            <div class="row" style="gap: 6px;">
+              <button id="bt-env" class="small">环境检查</button>
+              <button id="bt-mount" class="small">挂载数据</button>
+              <button id="bt-deploy" class="small" title="把平台自己交叉编译的 VIO install 部署到板端 /userdata/vio_backtest/install（不用板端预装的 /userdata/demo/install）">部署 VIO</button>
+            </div>
+            <label class="bt-inline-check" title="勾选后 git 拉代码（clone/fetch）通过 proxychains4 走本机代理（GitHub 直连不通时启用）"><input type="checkbox" id="bt-use-proxy"><span>git 走代理 (proxychains4)</span></label>
+          </div>
+        </div>
+        <div class="sidebar-pane" data-side-pane="manual-exp">
+          <div class="sidebar-section flex-1">
+            <div class="sidebar-head">
+              <span title="实验组与数据集做笛卡尔积">实验组（多选）</span>
+              <span>
+                <span class="hint">已选 <b id="bt-exp-count">0</b>/<b id="bt-exp-total">0</b></span>
+                <button id="bt-exp-pick-toggle" class="small">全选</button>
+                <button id="bt-exp-edit" class="small primary" title="新建实验片段（点每行实验名=编辑该实验）">＋ 新建</button>
+              </span>
+            </div>
+            <div class="sidebar-body"><div id="bt-exp-rows" class="exp-panel-rows manual-exp-rows"></div></div>
+          </div>
+        </div>
+      </aside>
+      <div class="grid-splitter" id="manual-splitter" title="拖动调整侧栏宽度"></div>
+      <div class="manual-right">
+        <div class="bt-action-bar">
+          <button id="bt-launch-script" class="small" title="编辑板端 launch.sh（启动前预生成默认）">编辑启动脚本</button>
+          <label class="field bt-log-field" title="VIO 算法日志级别（PRINT_* 输出）">
+            <span>verbosity</span>
+            <select id="bt-verbosity">
+              <option>SILENT</option><option>ERROR</option><option>WARNING</option>
+              <option selected>INFO</option><option>DEBUG</option><option>ALL</option>
+            </select>
+          </label>
+          <label class="field bt-log-field" title="VIO 节点的 ROS 日志级别">
+            <span>vio_log_level</span>
+            <select id="bt-vio-log-level">
+              <option>fatal</option><option>error</option><option selected>warn</option>
+              <option>info</option><option>debug</option><option>trace</option>
+            </select>
+          </label>
+          <button id="bt-batch-action" class="primary" title="无运行中批次时开新批次；有运行中批次时追加">▶ 启动回测</button>
+          <button id="bt-batch-stop" class="danger" disabled>■ 停止</button>
+        </div>
+        <div id="bt-procs" class="procs"></div>
+        <div class="content-tabs">
+          <button class="content-tab-btn active" data-bt-tab="data">数据预览</button>
+          <button class="content-tab-btn" data-bt-tab="queue">任务队列</button>
+          <button class="content-tab-btn" data-bt-tab="viz">可视化 / 日志</button>
+        </div>
+        <div class="content-pane active" data-bt-pane="data">
+          <div class="bt-viz">
+            <div class="pane-head"><span id="bt-viz-title">已选回测数据</span></div>
+            <div class="bt-viz-body">
+              <div id="bt-viz-idle" class="bt-viz-pane"></div>
+            </div>
+          </div>
+        </div>
+        <div class="content-pane" data-bt-pane="queue">
+          <div class="bt-queue-card" id="bt-queue-card">
+            <div class="pane-head"><span>任务队列</span></div>
+            <div class="bt-queue-wrap">
+              <table class="table bt-queue-table">
+                <thead><tr><th>#</th><th>编号</th><th>数据集</th><th>状态</th><th>开始</th><th>完成</th><th>直读bag</th><th>错误</th><th>配置</th><th>操作</th></tr></thead>
+                <tbody id="bt-queue-body">
+                  <tr><td colspan="10" class="hint">未运行批量</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="content-pane" data-bt-pane="viz">
+          <div class="bt-viz-stack">
+            <div class="bt-viz">
+              <div class="pane-head"><span>板端可视化</span><button id="bt-viz-reload" class="small hidden">刷新</button></div>
+              <div class="bt-viz-body">
+                <div id="bt-viz-empty" class="bt-viz-pane">
+                  <div class="idle-empty">回测未运行；启动后会显示 ov_web 可视化</div>
+                </div>
+                <div id="bt-viz-launching" class="bt-viz-pane hidden">
+                  <div class="launching-card">
+                    <div class="spinner"></div>
+                    <div>
+                      <div class="launching-title">启动算法中…</div>
+                      <div class="hint">板端拉起 VIO 链路，等算法进程就绪后自动切到可视化</div>
+                    </div>
+                  </div>
+                </div>
+                <div id="bt-viz-run" class="bt-viz-pane hidden">
+                  <iframe id="bt-iframe"></iframe>
+                  <div id="bt-viz-wait" class="viz-wait hidden">
+                    <div class="launching-card">
+                      <div class="spinner"></div>
+                      <div>
+                        <div class="launching-title">等待 ov_web 就绪…</div>
+                        <div class="hint">ov_web 进程已拉起，HTTP 端口就绪后自动加载，无需手动刷新</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="bt-splitter" id="bt-splitter"></div>
+            <div class="log-wrap"><pre id="bt-log"></pre></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- exp-picker dropdown (legacy — kept hidden, replaced by always-visible exp card) -->
+    <div id="bt-exp-panel" class="exp-panel hidden"></div>
+  </div>
+
+  <!-- ============ 自动回测 ============ -->
+  <div class="sub-pane" id="sub-pane-auto">
+    <div id="auto-status" class="auto-status"><span class="hint">加载中…</span></div>
+    <div class="auto-grid">
+      <aside class="sidebar" id="auto-sidebar">
+        <button class="sidebar-pin-btn" id="auto-sidebar-pin" title="固定/取消固定（取消后折叠到左侧）">📌</button>
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab-btn active" data-side="auto-data">数据</button>
+          <button class="sidebar-tab-btn" data-side="auto-config">配置</button>
+          <button class="sidebar-tab-btn" data-side="auto-exp">实验组</button>
+        </div>
+        <div class="sidebar-pane active" data-side-pane="auto-data">
+          <div class="sidebar-section flex-1">
+            <div class="sidebar-head">
+              <span>数据集（多选，与手动回测一致）</span>
+              <button id="auto-ds-toggle" class="small">全选</button>
+            </div>
+            <div class="sidebar-body"><div id="auto-ds-list" class="ds-list auto-ds-list"></div></div>
+            <div class="sidebar-foot"><span class="hint">已选 <b id="auto-ds-count">0</b> 个</span></div>
+          </div>
+        </div>
+        <div class="sidebar-pane" data-side-pane="auto-config">
+          <div class="sidebar-form">
+            <div class="auto-check-row">
+              <label class="bt-inline-check"><input type="checkbox" id="auto-enabled"><span>启用定时</span></label>
+              <label class="bt-inline-check"><input type="checkbox" id="auto-hourly-check"><span>每小时拉取</span></label>
+              <label class="bt-inline-check"><input type="checkbox" id="auto-build-enabled" checked><span>交叉编译（禁用=复用板端已装 VIO）</span></label>
+              <label class="bt-inline-check" title="勾选后 git clone/fetch 通过 proxychains4 走本机代理（GitHub 直连不通时启用）"><input type="checkbox" id="auto-use-proxy"><span>git 走代理 (proxychains4)</span></label>
+            </div>
+            <label class="field"><span>GitHub URL</span><input id="auto-github-url" placeholder="https://github.com/D-Robotics/drobotics_vio.git"></label>
+            <label class="field"><span>分支</span>
+              <span class="branch-wrap">
+                <select id="auto-branch"></select>
+                <button id="auto-branch-refresh" class="small" title="从远端刷新分支列表 (git fetch)">↻</button>
+              </span>
+            </label>
+            <label class="field"><span>每日定时 (HH:MM)</span><input id="auto-daily-time" type="time" value="02:00"></label>
+            <label class="field"><span>板子</span><select id="auto-board-ip"></select></label>
+            <label class="field"><span>编译命令</span><input id="auto-build-cmd" placeholder="build-tros-x5 drobotics_vio"></label>
+            <label class="field"><span>板端 install 路径</span><input id="auto-board-install-path" placeholder="/userdata/demo/install"></label>
+            <div class="row"><button id="auto-save" class="primary">保存配置</button><span id="auto-save-status" class="status"></span></div>
+            <div class="row">
+              <button id="auto-fetch-now" class="small">立即拉取新 commit</button>
+              <button id="auto-run-now" class="small">立即跑 pending 任务</button>
+            </div>
+          </div>
+        </div>
+        <div class="sidebar-pane" data-side-pane="auto-exp">
+          <div class="sidebar-section flex-1">
+            <div class="sidebar-head">
+              <span title="多选；留空 = 只跑基线组">实验组（多选）</span>
+              <span>
+                <span class="hint">已选 <b id="auto-exp-count">0</b>/<b id="auto-exp-total">0</b></span>
+                <button id="auto-exp-edit" class="small primary" title="新建实验片段（点每行实验名=编辑该实验）">＋ 新建</button>
+                <button id="auto-exp-toggle" class="small">全选</button>
+              </span>
+            </div>
+            <div class="sidebar-body"><div id="auto-exp-rows" class="exp-panel-rows auto-exp-rows"></div></div>
+          </div>
+        </div>
+      </aside>
+      <div class="grid-splitter" id="auto-grid-splitter" title="拖动调整侧栏宽度"></div>
+      <div class="auto-right">
+        <div class="bt-action-bar">
+          <button id="auto-launch-script" class="small" title="编辑自动回测的 launch.sh 模板">编辑启动脚本</button>
+        </div>
+        <div class="auto-card auto-viz-card">
+          <div class="pane-head"><span>已选数据预览 <b id="auto-viz-count">0</b></span></div>
+          <div id="auto-viz-idle" class="bt-viz-pane"></div>
+        </div>
+        <div class="auto-splitter" id="auto-splitter" title="拖动调整预览与任务队列高度"></div>
+        <div class="auto-card auto-tasks-card">
+          <div class="pane-head">
+            <span>任务队列 / 历史</span>
+            <span>
+              <button id="auto-tasks-refresh" class="small">刷新</button>
+            </span>
+          </div>
+          <div class="auto-tasks-wrap">
+            <table class="table auto-tasks-table">
+              <thead><tr><th>编号</th><th>commit</th><th>数据集</th><th>实验</th><th>状态</th><th>入队时间</th><th>完成时间</th><th>错误/结果</th><th>配置</th><th>操作</th></tr></thead>
+              <tbody id="auto-tasks-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 实验配置 ============ -->
+  <div class="sub-pane" id="sub-pane-exp-config">
+    <div class="row">
+      <button id="cfg-exp-add" class="primary">+ 新建实验片段</button>
+      <button id="cfg-exp-refresh" class="small">刷新</button>
+      <span class="hint" id="cfg-exp-count-label">共 0 个实验片段</span>
+    </div>
+    <div id="cfg-exp-list" class="cfg-exp-grid"></div>
+  </div>
+</section>
+
+<!-- ============================ 统计 ============================ -->
+<section id="tab-stats" class="tab">
+  <div class="row stats-toolbar">
+    <button id="st-refresh" class="primary">↻ 刷新</button>
+    <label class="field" style="flex: 0 0 auto;"><span>来源</span>
+      <select id="st-filter-source">
+        <option value="">全部</option>
+        <option value="manual">手动</option>
+        <option value="daily">定时</option>
+        <option value="commit">commit</option>
+      </select>
+    </label>
+    <label class="field" style="flex: 0 1 280px;"><span>commit</span>
+      <select id="st-filter-commit"><option value="">全部</option></select>
+    </label>
+    <label class="field" style="flex: 0 1 200px;"><span>数据集</span>
+      <select id="st-filter-dataset"><option value="">全部</option></select>
+    </label>
+    <label class="field" style="flex: 0 1 160px;"><span>实验组</span>
+      <select id="st-filter-experiment"><option value="">全部</option></select>
+    </label>
+    <label class="field" style="flex: 0 0 auto;"><span>状态</span>
+      <select id="st-filter-status">
+        <option value="">全部</option>
+        <option value="done">完成</option>
+        <option value="failed">失败</option>
+        <option value="running">运行中</option>
+        <option value="pending">排队中</option>
+      </select>
+    </label>
+    <button id="st-filter-clear">清空筛选</button>
+  </div>
+  <div class="row stats-toolbar">
+    <button id="st-sel-all">全选</button>
+    <button id="st-sel-none">清空选择</button>
+    <span class="hint">已选 <b id="st-sel-count">0</b> 条</span>
+    <span style="flex:1"></span>
+    <button id="st-report-html">⬇ 导出 HTML 报告</button>
+    <button id="st-report-pdf">⬇ 导出 PDF 报告</button>
+    <button id="st-del-sel" class="danger" title="删除勾选的结果（移到 results_deleted_ 回收目录，可手动恢复）">🗑 删除选中</button>
+  </div>
+  <div id="stats-list" class="stats-list"></div>
+</section>
+
+<script src="vendor/uplot.iife.min.js"></script>
+<script src="app.js?v=151"></script>
+</body>
+</html>

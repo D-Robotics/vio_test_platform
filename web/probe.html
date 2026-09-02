@@ -1,0 +1,18 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">probe.html · uPlot series 默认值探测</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script src="/vendor/uplot.iife.min.js"></script>
+<script>
+// probe: what does uPlot think of series defaults?
+const data = [[0,1,2,3], [1,2,4,8]];
+const u = new uPlot({width:480,height:200,series:[{}, {stroke:'red',width:2}]}, data, document.body);
+window.__probe = {
+  s1: {auto: u.series[1].auto, show: u.series[1].show, scale: u.series[1].scale, facets: u.series[1].facets},
+  // is there a mode property?
+  mode: u.mode,
+  // x-series (index 0) idxs:
+  s0idxs: u.series[0].idxs,
+};
+</script></body></html>

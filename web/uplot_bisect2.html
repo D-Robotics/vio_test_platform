@@ -1,0 +1,23 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/uplot.iife.min.js"></script>
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">uplot_bisect2.html · uPlot bisect n=1..6</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script>
+const t2 = Array.from({length:100},(_,i)=>i*0.1);
+function count(canvas){const img=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+let o=0,blk=0;for(let i=0;i<img.length;i+=4){const r=img[i],g=img[i+1],b=img[i+2];
+if(r>200&&g>80&&g<170&&b<70)o++;if(r<40&&g<40&&b<40)blk++;}return {o,blk,tot:canvas.width*canvas.height};}
+const results=[];
+for (let n=1;n<=6;n++){
+  const d=document.createElement('div'); d.style.cssText='width:480px;height:200px';
+  document.body.appendChild(d);
+  const data=[t2, ...Array.from({length:n},(_,k)=>t2.map((x,i)=>[x,Math.sin(i*0.2+k)]))];
+  const up=new uPlot({width:480,height:200,scales:{x:{time:false}},
+    series:[{},...Array.from({length:n},()=>({stroke:'#ff8800',width:2}))]}, data, d);
+  const c=d.querySelector('canvas');
+  results.push('n='+n+': '+JSON.stringify(count(c)));
+}
+window._r=results;
+</script></body></html>

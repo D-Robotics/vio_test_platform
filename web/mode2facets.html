@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">mode2facets.html · uPlot mode:2 facets 测试</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script src="/vendor/uplot.iife.min.js"></script>
+<script>
+const t = [0,1,2,3];
+const data = [t, t.map((x,i)=>[x, [1,2,4,8][i]])];
+try {
+  const u = new uPlot({mode:2, width:480, height:200,
+    series:[{}, {facets:[{scale:'x'},{scale:'y'}], stroke:'red', width:2}]}, data, document.body);
+  window.__r = {idxs: u.series[1].idxs.length, xmin: u.scales.x.min};
+  const c=document.querySelector('canvas');let col=0;
+  if(c){const img=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  for(let j=0;j<img.length;j+=4){const mx=Math.max(img[j],img[j+1],img[j+2]),mn=Math.min(img[j],img[j+1],img[j+2]);if(mx-mn>40)col++;}}
+  window.__r.colored = col;
+} catch(e) { window.__r = 'ERR: ' + e.message; }
+</script></body></html>

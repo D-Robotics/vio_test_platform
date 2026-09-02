@@ -1,0 +1,16 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/style.css">
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">esm_http_test.html · uPlot ESM 测试</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script type="module">
+import uPlot from "/vendor/uplot_site_esm.js";
+const t = Array.from({length:100},(_,i)=>1787217614+i*0.08);
+const data = [t, t.map((x,i)=>[x, Math.sin(i*0.2)])];
+const u = new uPlot({width:480,height:200,scales:{x:{time:false}},
+  series:[{}, {stroke:'#ff8800',width:2}]}, data, document.body);
+window.__h = u.series[1].idxs.length;
+const c=document.querySelector('canvas');let col=0;
+if(c){const img=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+for(let j=0;j<img.length;j+=4){const mx=Math.max(img[j],img[j+1],img[j+2]),mn=Math.min(img[j],img[j+1],img[j+2]);if(mx-mn>40)col++;}}
+window.__hcol=col;
+</script></body></html>

@@ -1,0 +1,17 @@
+<!DOCTYPE html><html><body>
+<script type="module">
+import uPlot from "/vendor/uplot_site_esm.js";
+// EXACT live-demo structure
+let xs = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30];
+const data = [
+  new Float32Array(xs),
+  new Float32Array(xs.map(t => Math.sin(t)*10)),
+];
+const u = new uPlot({width:480,height:200,scales:{x:{time:false}},
+  series:[{}, {stroke:'red',width:2}]}, data, document.body);
+window.__demo = u.series[1].idxs.length;
+const c=document.querySelector('canvas');let col=0;
+if(c){const img=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+for(let j=0;j<img.length;j+=4){const mx=Math.max(img[j],img[j+1],img[j+2]),mn=Math.min(img[j],img[j+1],img[j+2]);if(mx-mn>40)col++;}}
+window.__democol=col;
+</script></body></html>

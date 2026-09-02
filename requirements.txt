@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+paramiko
+mcap
+mcap-ros2-support
+pyyaml
+pillow
+numpy

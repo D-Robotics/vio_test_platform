@@ -1,0 +1,15 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">mode2err.html · uPlot mode:2 错误捕获</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script src="/vendor/uplot.iife.min.js"></script>
+<script>
+window.__err = null;
+try {
+  const t = [0,1,2,3];
+  const data = [t, t.map((x,i)=>[x, [1,2,4,8][i]])];
+  new uPlot({mode:2, width:480, height:200,
+    series:[{}, {facets:[{scale:'x'},{scale:'y'}], stroke:'red', width:2}]}, data, document.body);
+} catch(e) { window.__err = e.stack; }
+</script></body></html>

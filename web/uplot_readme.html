@@ -1,0 +1,23 @@
+<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="/vendor/uplot.min.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/uplot.iife.min.js"></script>
+</head><body>
+<header class="proto-shell"><span class="logo">VIO</span><span class="proto-title">uplot_readme.html · uPlot README 示例</span><a href="/" class="proto-back">← 返回平台</a></header>
+<script>
+// OFFICIAL README example, verbatim structure
+const data = [
+  [0, 1, 2, 3, 4, 5, 6],        // x
+  [1, 2, 4, 8, 16, 32, 64],     // y (pairs form below in mode 2)
+];
+const opts = {
+  width: 480, height: 200,
+  series: [ {}, { stroke: 'red' } ],
+};
+const d = document.createElement('div'); document.body.appendChild(d);
+const u = new uPlot(opts, [[0,1,2,3,4,5,6], [[0,1],[1,2],[2,4],[3,8],[4,16],[5,32],[6,64]]], d);
+window._s = () => { const c=d.querySelector('canvas'); if(!c) return 'nocanvas';
+  const img=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  let red=0; for(let i=0;i<img.length;i+=4){ if(img[i]>150&&img[i+1]<80&&img[i+2]<80) red++; }
+  return 'redpx='+red; };
+</script></body></html>
