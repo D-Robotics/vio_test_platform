@@ -338,6 +338,14 @@ def _git_auth_env(token: str, username: str = "x-access-token"):
         "VIO_GIT_TOKEN_FILE": tokenfile,
         "GIT_ASKPASS": script,
         "GIT_TERMINAL_PROMPT": "0",
+        # A host may define a global credential.helper (e.g. `gh auth
+        # git-credential`). For a repo the authenticated account has no access
+        # to, git answers with that helper's credentials, hits 403, and never
+        # falls through to GIT_ASKPASS — so OUR token is never used. Force
+        # credential.helper to empty so the service token always wins.
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "",
     }
     return env, tmpdir
 
