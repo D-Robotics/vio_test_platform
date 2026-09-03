@@ -45,6 +45,12 @@ _BUILD_EXTRAS = os.path.abspath(
 )
 _DEFAULT_BUILD_CMD = f"bash {_BUILD_SCRIPT} . {_BUILD_EXTRAS}"
 
+
+def _build_script_path(cmd: str) -> str:
+    """Extract the build_x5_docker.sh path from a build_cmd shell string."""
+    m = re.search(r"(\S*build_x5_docker\.sh)", cmd or "")
+    return m.group(1) if m else ""
+
 # -----------------------------------------------------------------------------
 # Defaults
 # -----------------------------------------------------------------------------
@@ -115,6 +121,15 @@ def _load_state():
             # cross-build runs in docker with the board sysroot
             if cfg.get("build_cmd") == "build-tros-x5 drobotics_vio":
                 cfg["build_cmd"] = _DEFAULT_BUILD_CMD
+            # migrate: a persisted build_cmd can go stale when the platform dir
+            # is renamed (e.g. test_platform -> vio_test_platform) — its script
+            # no longer exists and every build fails. Reset to the live default
+            # computed from this checkout so a moved platform self-heals.
+            bc = (cfg.get("build_cmd") or "").strip()
+            if bc:
+                script = _build_script_path(bc)
+                if not (script and os.path.isfile(script)):
+                    cfg["build_cmd"] = _DEFAULT_BUILD_CMD
             # migrate: the default track branch is develop (was master)
             if cfg.get("branch") == "master":
                 cfg["branch"] = "develop"

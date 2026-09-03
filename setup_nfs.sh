@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time host setup: install & configure the NFS server exporting DATA_ROOT.
-# Run with sudo:  sudo bash test_platform/setup_nfs.sh
+# Run with sudo:  sudo bash vio_test_platform/setup_nfs.sh
 set -e
 DATA_ROOT="${DATA_ROOT:-/home/hobot/work/cc_ws/tros_ws}"
 if ! dpkg -s nfs-kernel-server >/dev/null 2>&1; then
