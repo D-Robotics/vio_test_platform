@@ -882,6 +882,8 @@ def ensure_sysroot(board_ip: str) -> tuple:
     build_x5_docker.sh (X5_SYSROOT -> .cache/x5_sysroot -> native /). Only pulls
     from the board when no candidate provides the sysroot and board_ip is valid.
     """
+    if config.native_aarch64_host():
+        return True, "原生 aarch64 主机，直接本地构建"
     if config.sysroot_ready():
         return True, "sysroot 已就绪"
     if os.environ.get("X5_SYSROOT"):

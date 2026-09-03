@@ -20,6 +20,43 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SYSROOT="${X5_SYSROOT:-$HERE/.cache/x5_sysroot}"
 IMAGE="${X5_BUILD_IMAGE:-pc_tros_solution_ubuntu22.04:v1.0.0}"
 
+# --- Native aarch64 build host --------------------------------------------
+# The pc_tros image is x86_64. On an aarch64 build host it only runs under
+# qemu/binfmt, and under emulation the python rosidl message generation (every
+# message package runs `python3 -m rosidl_adapter` at configure time, reached
+# via rosidl_generate_interfaces.cmake:286) fails with a bare
+#   execute_process(...) returned error code 1
+# so the cross-build can never produce irobot_create_msgs. When the host is
+# itself aarch64 with a native /opt/tros/humble, ignore the docker image and
+# build directly with the host's colcon + compilers: no qemu, no cross toolchain,
+# no sysroot bind (the native tree already is the target).
+HOST_ARCH="$(uname -m)"
+if { [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; } && [ -f /opt/tros/humble/setup.bash ]; then
+  echo "[build_x5_docker] native aarch64 host: building natively (no docker image)"
+  source /opt/tros/humble/setup.bash
+  basepaths=( "$SRC" )
+  if [ -n "$EXTRAS" ] && [ -d "$EXTRAS" ]; then
+    for d in "$EXTRAS"/*/; do
+      [ -d "$d" ] || continue
+      name="$(basename "$d")"
+      [ "$name" = "drobotics_vio" ] && continue
+      basepaths+=( "$(cd "$d" && pwd)" )
+    done
+  fi
+  WS="$(mktemp -d -p "$(dirname "$SRC")" .x5ws.XXXXXX)"
+  trap 'rm -rf "$WS" 2>/dev/null || sudo -n rm -rf "$WS" 2>/dev/null || true' EXIT
+  # colcon --base-paths merges every discovered package (drobotics_vio + extras)
+  # into one dependency-ordered graph sharing $WS/install, so drobotics_vio's
+  # find_package(irobot_create_msgs REQUIRED) resolves against the extras.
+  ( cd "$WS" && colcon build --base-paths "${basepaths[@]}" \
+      --event-handlers console_direct+ \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release )
+  mkdir -p "$SRC/install"
+  cp -r --force "$WS/install/." "$SRC/install/"
+  echo "[build_x5_docker] install/ -> $SRC/install/"
+  exit 0
+fi
+
 # sysroot candidates: explicit X5_SYSROOT (exact) else .cache/x5_sysroot else the
 # machine's own native sysroot (/). An aarch64 dev host/board already has
 # /opt/tros/humble, /usr/include, /usr/share/eigen3, /usr/lib/aarch64-linux-gnu at
@@ -82,6 +119,7 @@ docker run --rm "${DOCKER_ARGS[@]}" "$IMAGE" bash -c '
   source /opt/tros/humble/setup.bash
   # /ws is the workspace root; colcon discovers packages one level down.
   colcon build \
+    --event-handlers console_direct+ \
     --cmake-args -DCMAKE_TOOLCHAIN_FILE=/x5.toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 '
 

@@ -1,6 +1,7 @@
 """Global configuration for the test platform."""
 import os
 import socket
+import sys
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -107,6 +108,23 @@ def sysroot_ready() -> bool:
     """
     return any(all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS)
                for c in _sysroot_candidates())
+
+
+def native_aarch64_host() -> bool:
+    """A build host that is itself aarch64 with a native /opt/tros/humble.
+
+    build_x5_docker.sh builds natively (no docker cross-build, no sysroot bind)
+    in that case, so the cross-sysroot markers are irrelevant and a board pull
+    must NOT be attempted.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        if os.uname().machine not in ("aarch64", "arm64"):
+            return False
+    except AttributeError:
+        return False
+    return os.path.isdir("/opt/tros/humble")
 
 
 def host_ip(for_ip: str = None) -> str:
