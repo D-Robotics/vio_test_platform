@@ -2,8 +2,8 @@
 
 write_report() renders a standalone HTML document (metrics + trajectory /
 preview images inlined as base64) and, for format="pdf", prints it to PDF
-with headless Chromium via playwright. Reports land in results/_reports/ and
-are served back through the /results static mount.
+with weasyprint (no headless browser or download needed). Reports land in
+results/_reports/ and are served back through the /results static mount.
 """
 import base64
 import datetime
@@ -204,17 +204,10 @@ def build_html(items: list, title: str = "") -> str:
 
 
 def _html_to_pdf(html_text: str, out_pdf: str) -> None:
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        try:
-            page = browser.new_page()
-            page.set_content(html_text, wait_until="load")
-            page.pdf(path=out_pdf, format="A4", print_background=True,
-                     margin={"top": "15mm", "bottom": "15mm",
-                             "left": "12mm", "right": "12mm"})
-        finally:
-            browser.close()
+    from weasyprint import HTML
+
+    # Page geometry comes from the @page rule in _CSS; weasyprint honours it.
+    HTML(string=html_text).write_pdf(out_pdf)
 
 
 def write_report(paths: list, fmt: str = "html", title: str = "") -> dict:
