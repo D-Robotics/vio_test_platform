@@ -47,9 +47,14 @@ _BUILD_EXTRAS = os.path.abspath(
 # extra workspace pkgs that the cross-build find_package(... REQUIRED)s but are
 # NOT in /opt/tros/humble. Populated once into .cache/x5_extras; a fresh build
 # host with an empty extras dir self-heals here instead of failing the build.
+# Each is (url, branch). Branch matters: the board runs ROS2 Humble, so an
+# interface package must be cloned from its distro branch — irobot_create_msgs'
+# DEFAULT branch is 'rolling', which breaks Humble's rosidl_generate_interfaces
+# (rolling messages are incompatible with Humble/rosidl-generator 2.x). Pin the
+# Humble branch; None = use the repo's default.
 _BUILD_EXTRAS_REPOS = {
-    "irobot_create_msgs": "https://github.com/iRobotEducation/irobot_create_msgs.git",
-    "trial_guard": "https://github.com/D-Robotics/trial_guard.git",
+    "irobot_create_msgs": ("https://github.com/iRobotEducation/irobot_create_msgs.git", "humble"),
+    "trial_guard": ("https://github.com/D-Robotics/trial_guard.git", None),
 }
 _DEFAULT_BUILD_CMD = f"bash {_BUILD_SCRIPT} . {_BUILD_EXTRAS}"
 
@@ -338,6 +343,15 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
     return True
 
 
+def _repo_on_branch(dest: str) -> "str | None":
+    """Current branch of the git repo at dest, or None if not determinable."""
+    r = subprocess.run(["git", "-C", dest, "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True, timeout=20)
+    if r.returncode == 0:
+        return r.stdout.strip()
+    return None
+
+
 def _ensure_extras(use_proxy: "bool | None" = None) -> "tuple[bool, str]":
     """Clone the build-extras packages into _BUILD_EXTRAS if absent. (ok, detail).
 
@@ -346,14 +360,28 @@ def _ensure_extras(use_proxy: "bool | None" = None) -> "tuple[bool, str]":
     /opt/tros/humble. A fresh build host has an empty .cache/x5_extras, so fill
     it once. Idempotent + thread-safe; a hollow/partial clone is removed so the
     next call retries instead of inheriting a broken package dir.
+
+    A pinned repo (e.g. irobot_create_msgs -> humble) is re-cloned when an
+    existing checkout sits on the wrong branch — a host that earlier cloned the
+    default 'rolling' branch keeps a checkout that Humble's rosidl_generate_
+    interfaces refuses, so correcting it must not be skipped just because the dir
+    already exists.
     """
     with _extras_lock:
         present = set()
         if os.path.isdir(_BUILD_EXTRAS):
             present = {name for name in os.listdir(_BUILD_EXTRAS)
                        if os.path.isdir(os.path.join(_BUILD_EXTRAS, name))}
-        missing = sorted(set(_BUILD_EXTRAS_REPOS) - present)
-        if not missing:
+        missing, repin = [], []
+        for name, (_url, branch) in _BUILD_EXTRAS_REPOS.items():
+            if name not in present:
+                missing.append(name)
+            elif branch is not None:
+                dest = os.path.join(_BUILD_EXTRAS, name)
+                if _repo_on_branch(dest) != branch:
+                    repin.append(name)
+        to_clone = sorted(missing + repin)
+        if not to_clone:
             return True, "extras 已就绪"
         os.makedirs(_BUILD_EXTRAS, exist_ok=True)
         proxy_flag = get_config().get("use_proxy", False) if use_proxy is None else use_proxy
@@ -371,9 +399,15 @@ def _ensure_extras(use_proxy: "bool | None" = None) -> "tuple[bool, str]":
             env_up, auth_tmp = _git_auth_env(token)
             env.update(env_up)
         try:
-            for name in missing:
+            for name in to_clone:
                 dest = os.path.join(_BUILD_EXTRAS, name)
-                cmd = ["git", "clone", "--depth", "1", _BUILD_EXTRAS_REPOS[name], dest]
+                if name in repin:
+                    shutil.rmtree(dest, ignore_errors=True)
+                url, branch = _BUILD_EXTRAS_REPOS[name]
+                cmd = ["git", "clone", "--depth", "1"]
+                if branch:
+                    cmd += ["--branch", branch]
+                cmd += [url, dest]
                 if proxy_flag:
                     cmd = ["proxychains4"] + cmd
                 try:

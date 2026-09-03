@@ -6,6 +6,7 @@ dir is empty the build_x5_docker.sh glob `"$EXTRAS"/*/` leaves a literal '*/'
 (no match) and the subsequent `cd` aborts the build. The platform prepares the
 extras by cloning the two repos when absent.
 """
+import os
 import subprocess
 
 from server import auto_test
@@ -31,21 +32,27 @@ def test_ensure_extras_clones_missing(monkeypatch, tmp_path):
 
     ok, detail = auto_test._ensure_extras()
     assert ok is True
-    # both repos were cloned (git clone <url> <dest>)
+    # both repos were cloned (git clone [--branch X] <url> <dest>)
     cl = [c for c in calls if c[0] == "git" and c[1] == "clone"]
     assert len(cl) == len(auto_test._BUILD_EXTRAS_REPOS)
-    # each clone targets a dir inside _BUILD_EXTRAS
     import os
     for c in cl:
         assert c[-1].startswith(str(tmp_path))
+    # irobot_create_msgs must be pinned to the board's ROS2 distro branch
+    ib = next(c for c in cl if "irobot_create_msgs" in c[-1])
+    assert "--branch" in ib and "humble" in ib
 
 
 def test_ensure_extras_skips_when_present(monkeypatch, tmp_path):
     _blank_extras(monkeypatch, tmp_path, subdirs=tuple(auto_test._BUILD_EXTRAS_REPOS))
     calls = []
+    # the checkouts are already on their pinned branch -> nothing to clone
+    branch_by_name = {n: b for n, (_, b) in auto_test._BUILD_EXTRAS_REPOS.items()}
 
     monkeypatch.setattr(auto_test.subprocess, "run",
                         lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(auto_test, "_repo_on_branch",
+                        lambda dest: branch_by_name.get(os.path.basename(dest)))
     ok, detail = auto_test._ensure_extras()
     assert ok is True
     assert calls == []  # nothing cloned
@@ -107,3 +114,30 @@ def test_ensure_extras_uses_token_when_present(monkeypatch, tmp_path):
     for env in envs:
         assert env["GIT_ASKPASS"] == "/tmp/askpass"  # token drives auth
         assert env["GIT_CONFIG_VALUE_0"] == ""
+
+
+def test_ensure_extras_repins_wrong_branch(monkeypatch, tmp_path):
+    # A host that earlier cloned irobot_create_msgs' DEFAULT 'rolling' branch
+    # still has a checkout on disk. It must be re-cloned onto 'humble' because
+    # Humble's rosidl_generate_interfaces rejects rolling messages. trial_guard
+    # has no pinned branch, so a present checkout is left untouched.
+    _blank_extras(monkeypatch, tmp_path, subdirs=tuple(auto_test._BUILD_EXTRAS_REPOS))
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(auto_test.subprocess, "run", fake_run)
+    branches = {"irobot_create_msgs": "rolling", "trial_guard": "develop"}
+    monkeypatch.setattr(auto_test, "_repo_on_branch",
+                        lambda dest: branches.get(os.path.basename(dest)))
+    ok, detail = auto_test._ensure_extras()
+    assert ok is True
+    # irobot_create_msgs was re-cloned on the pinned humble branch
+    ib = [c for c in calls if c[0] == "git" and c[1] == "clone" and "irobot_create_msgs" in c[-1]]
+    assert len(ib) == 1
+    assert "--branch" in ib[0] and "humble" in ib[0]
+    # unpinned trial_guard site was not touched
+    tg = [c for c in calls if c[0] == "git" and c[1] == "clone" and "trial_guard" in c[-1]]
+    assert tg == []
