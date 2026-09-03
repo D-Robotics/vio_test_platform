@@ -31,6 +31,7 @@ _LOGS = ["vio.log", "ov_web.log", "tf.log", "bag.log"]
 # BOARD_INSTALL_DIR) — NOT the board's preinstalled /userdata/demo/install,
 # which is too old (no ov_web).
 _ROS_ENV = (
+    f"export ROS_DOMAIN_ID={config.ROS_DOMAIN_ID}; "
     "source /opt/tros/humble/setup.bash"
     f" && [ -f {config.BOARD_INSTALL_DIR}/setup.bash ] && source {config.BOARD_INSTALL_DIR}/setup.bash"
     " || true; "
@@ -323,7 +324,8 @@ def default_launch_template() -> str:
     install_dir, current, _ros_env, sub_from_compressed_image, imu_topic,
     verbosity, vio_log_level.
     """
-    env = ("source /opt/tros/humble/setup.bash && "
+    env = (f"export ROS_DOMAIN_ID={config.ROS_DOMAIN_ID}; "
+           "source /opt/tros/humble/setup.bash && "
            "[ -f {{install_dir}}/setup.bash ] && source {{install_dir}}/setup.bash || true; ")
     env_sh = env.replace("{{install_dir}}", config.BOARD_INSTALL_DIR)
     lines = [

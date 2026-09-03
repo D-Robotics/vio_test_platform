@@ -91,6 +91,22 @@ def test_pick_frame_topic_none_on_no_image(monkeypatch):
     assert datasets.pick_frame_topic("whatever") is None
 
 
+def test_ros_domain_id_exported_in_default_launch_template():
+    """The generated launch.sh must set ROS_DOMAIN_ID so the board's DDS nodes
+    (tf / ov_web / VIO / bag play) are isolated from unrelated domain-0 traffic
+    on the shared network."""
+    text = backtest.default_launch_template()
+    assert f"export ROS_DOMAIN_ID={config.ROS_DOMAIN_ID};" in text
+    # every spawned node must carry it (2 tf + ov_web + VIO all use the env prefix)
+    assert text.count(f"export ROS_DOMAIN_ID={config.ROS_DOMAIN_ID};") >= 4
+
+
+def test_ros_domain_id_in_ros_env_prefix():
+    """_ROS_ENV (used by build_launch_script's nohup bash -c lines) must export
+    the domain before the node starts, so manual-batch runs inherit it too."""
+    assert f"export ROS_DOMAIN_ID={config.ROS_DOMAIN_ID}; " in backtest._ROS_ENV
+
+
 def test_default_launch_template_is_dataset_free_and_renderable():
     """The template must not hardcode any concrete dataset value, and every
     {{token}} must resolve under start_backtest's render context so a saved

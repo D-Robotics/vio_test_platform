@@ -60,6 +60,13 @@ BOARD_CURRENT_LINK = f"{BOARD_BASE}/current"
 # ov_web visualization port on the boards
 OV_WEB_PORT = 9988
 
+# ROS2 DDS domain injected into every generated board launch.sh. The default
+# domain (0) is shared by every ROS2 machine on the network, which is what makes
+# unrelated DDS discovery traffic bleed into a run. A distinct non-zero domain
+# isolates the board's nodes (tf / ov_web / VIO / bag play all run in the same
+# script, so they share it) from external interference. Override with ROS_DOMAIN_ID.
+ROS_DOMAIN_ID = int(os.environ.get("ROS_DOMAIN_ID", "42"))
+
 # scan depth when looking for dataset dirs under DATA_ROOT
 SCAN_DEPTH = 3
 
