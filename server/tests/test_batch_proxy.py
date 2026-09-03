@@ -79,7 +79,7 @@ def test_batch_build_forwards_use_proxy_to_fetch(monkeypatch):
             return 0, "", ""
         return 0, "aabbccd", ""
 
-    def fake_run_build(sha):
+    def fake_run_build(sha, board_ip=None):
         return True, "built"
 
     def fake_deploy_install(ip):

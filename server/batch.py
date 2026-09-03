@@ -393,7 +393,7 @@ def _batch_build_and_deploy(batch: "BatchRun") -> bool:
         sha = out.strip()
         batch.commit_short = sha[:10]
         batch.build_status = "building"
-        ok, log = auto_test._run_build(sha)
+        ok, log = auto_test._run_build(sha, batch.ip)
         batch.build_log = log
         if not ok:
             return False

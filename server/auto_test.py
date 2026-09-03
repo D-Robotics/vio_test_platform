@@ -21,13 +21,14 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import types
 
 from . import backtest, batch, config, experiments as _experiments, runno
-from .boards import Ssh
+from .boards import Ssh, is_valid_ip
 
 # -----------------------------------------------------------------------------
 # Paths
@@ -78,6 +79,9 @@ _DEFAULT_CONFIG = {
 _state_lock = threading.Lock()
 # serialises mirror fetch/refresh so a slow GitHub never races a second one
 _fetch_lock = threading.Lock()
+# serialises a board-sysroot pull: the scheduler thread, FastAPI workers and the
+# batch thread can all reach _run_build, and a ~600MB pull must not race itself
+_sysroot_lock = threading.Lock()
 # last mirror-clone failure (surfaced to the UI instead of silently failing)
 _mirror_error = ""
 # last auto-build failure (when a first deploy triggers the cross-build)
@@ -756,9 +760,51 @@ def bootstrap_mirror():
 # -----------------------------------------------------------------------------
 # Task execution
 # -----------------------------------------------------------------------------
-def _run_build(commit: str) -> tuple:
+def _pull_sysroot(board_ip: str) -> tuple:
+    """Run pull_sysroot.py to fetch + extract the board sysroot. (ok, detail)."""
+    script = os.path.join(config.REPO_DIR, "pull_sysroot.py")
+    if not os.path.isfile(script):
+        return False, f"缺少 {script}，无法拉取 sysroot"
+    try:
+        r = subprocess.run([sys.executable, script, board_ip], cwd=config.REPO_DIR,
+                           capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        return False, "sysroot 拉取超时(>30min)"
+    except Exception as e:  # noqa: BLE001
+        return False, f"sysroot 拉取异常: {e}"
+    detail = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        return False, f"sysroot 拉取失败(rc={r.returncode}):\n{detail[-600:]}"
+    if not config.sysroot_ready():
+        return False, "sysroot 拉取成功(rc=0)但校验仍失败\n" + detail[-400:]
+    return True, "sysroot 已从板端拉取并解压"
+
+
+def ensure_sysroot(board_ip: str) -> tuple:
+    """Ensure the cross-build sysroot is usable before a build. (ok, detail).
+
+    Idempotent + thread-safe. Uses the same candidate resolution as
+    build_x5_docker.sh (X5_SYSROOT -> .cache/x5_sysroot -> native /). Only pulls
+    from the board when no candidate provides the sysroot and board_ip is valid.
+    """
+    if config.sysroot_ready():
+        return True, "sysroot 已就绪"
+    if os.environ.get("X5_SYSROOT"):
+        return False, f"X5_SYSROOT={os.environ.get('X5_SYSROOT')} 不是可用的 sysroot，请修正或撤销该环境变量"
+    if not board_ip:
+        return False, "构建需要交叉编译 sysroot，但未配置 board_ip，无法从板端拉取"
+    if not is_valid_ip(board_ip):
+        return False, f"board_ip 无效: {board_ip}"
+    with _sysroot_lock:
+        if config.sysroot_ready():  # double-check after acquiring the lock
+            return True, "sysroot 已就绪"
+        return _pull_sysroot(board_ip)
+
+
+def _run_build(commit: str, board_ip: str = None) -> tuple:
     """Checkout + build. Returns (ok, log_tail)."""
     cfg = get_config()
+    board_ip = board_ip or cfg.get("board_ip", "")
     rc, _, err = _git(["checkout", "-f", commit])
     if rc != 0:
         return False, f"git checkout failed: {err}"
@@ -767,6 +813,12 @@ def _run_build(commit: str) -> tuple:
     build_cmd = cfg.get("build_cmd", "")
     if not build_cmd:
         return True, "build skipped (no build_cmd)"
+    # Only the docker cross-build (build_x5_docker.sh) needs these host-side
+    # prerequisites; a custom build_cmd owns its own deps.
+    if _build_script_path(build_cmd):
+        ok, detail = ensure_sysroot(board_ip)
+        if not ok:
+            return False, detail
     try:
         r = subprocess.run(build_cmd, shell=True, cwd=_MIRROR_DIR,
                            capture_output=True, text=True, timeout=1800)
@@ -831,7 +883,7 @@ def _deploy_install(ip: str, install_dir: str = None, sha: str = None) -> tuple:
     return True, f"deployed to {board_path}"
 
 
-def _ensure_build_for_deploy() -> tuple:
+def _ensure_build_for_deploy(ip: str = "") -> tuple:
     """Return (install_dir, label, sha); auto-build when install/ is missing.
 
     First deploy on a fresh host: the mirror has source but was never compiled.
@@ -855,7 +907,7 @@ def _ensure_build_for_deploy() -> tuple:
     if not commit:
         _last_build_error = f"无法解析分支 {branch} 的提交，无法自动编译"
         return None, "", ""
-    ok, log = _run_build(commit)
+    ok, log = _run_build(commit, ip)
     if not ok:
         _last_build_error = f"自动交叉编译失败：\n{log[-1000:]}"
         return None, "", ""
@@ -869,7 +921,7 @@ def deploy_to_board(ip: str) -> dict:
     When no install/ exists yet, triggers the mirror cross-build first so a fresh
     host deploys without a manual build.
     """
-    install_dir, label, sha = _ensure_build_for_deploy()
+    install_dir, label, sha = _ensure_build_for_deploy(ip)
     if not install_dir:
         return {"ok": False,
                 "detail": (_last_build_error or
@@ -888,7 +940,7 @@ def ensure_deployed(ip: str) -> tuple:
     `_deploy_install`; when it matches the source HEAD the transfer is skipped.
     Returns (ok, detail).
     """
-    install_dir, label, sha = _ensure_build_for_deploy()
+    install_dir, label, sha = _ensure_build_for_deploy(ip)
     if not install_dir:
         return False, (_last_build_error or
                        "镜像仓库与本地都没有构建产物，且无法自动编译；请检查网络是否能 clone 源码，"
@@ -914,7 +966,7 @@ def _run_one_task(task: dict) -> None:
     # 1) build
     _update_task(task["id"], phase="building")
     task["phase"] = "building"
-    ok, log_tail = _run_build(task["commit"])
+    ok, log_tail = _run_build(task["commit"], ip)
     _update_task(task["id"], build_log_tail=log_tail[-1000:])
     if not ok:
         _mark_failed(task, f"build: {log_tail[:500]}")

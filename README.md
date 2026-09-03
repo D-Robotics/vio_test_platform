@@ -41,7 +41,7 @@ datasets / config / boards / env / backtest(start|stop|status|mount) / batch(sta
 
 ## 板端环境要求（重要）
 
-SSH 启动的命令自动 `source /opt/tros/humble/setup.bash` + `/userdata/demo/install/setup.bash`。
+SSH 启动的命令自动 `source /opt/tros/humble/setup.bash` + `/userdata/vio_backtest/install/setup.bash`。
 **板上安装的 drobotics_vio 需为较新版本**（含 `subscribe.launch.py` + `ov_web`）：
 2026-08-28 在 192.168.1.15 上验证时发现该板固件较旧——compressed 订阅 topic 硬编码为
 `/sub_image_combine_jjpeg`（typo，不读 launch 参数）且无 `ov_web.launch.py`，导致

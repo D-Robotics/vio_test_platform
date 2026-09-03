@@ -20,8 +20,30 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SYSROOT="${X5_SYSROOT:-$HERE/.cache/x5_sysroot}"
 IMAGE="${X5_BUILD_IMAGE:-pc_tros_solution_ubuntu22.04:v1.0.0}"
 
-for p in opt/tros/humble usr/include usr/lib/aarch64-linux-gnu; do
-  [ -e "$SYSROOT/$p" ] || { echo "sysroot missing $p — run: python3 pull_sysroot.py <board_ip>" >&2; exit 1; }
+# sysroot candidates: explicit X5_SYSROOT (exact) else .cache/x5_sysroot else the
+# machine's own native sysroot (/). An aarch64 dev host/board already has
+# /opt/tros/humble, /usr/include, /usr/share/eigen3, /usr/lib/aarch64-linux-gnu at
+# / — recognise that instead of forcing a pull. Only pull from the board when no
+# candidate satisfies every bind-mount path below.
+MARKERS="opt/tros/humble usr/include usr/share/eigen3 usr/lib/aarch64-linux-gnu"
+
+_sysroot_ok() { # $1 = candidate dir; every marker must be a dir under it
+  for p in $MARKERS; do
+    [ -d "$1/$p" ] || return 1
+  done
+  return 0
+}
+
+if [ -z "${X5_SYSROOT:-}" ] && ! _sysroot_ok "$SYSROOT"; then
+  if _sysroot_ok /; then
+    SYSROOT=/
+  fi
+fi
+
+for p in $MARKERS; do
+  [ -e "$SYSROOT/$p" ] || {
+    echo "sysroot missing: $SYSROOT/$p — 机器已原生带 aarch64 sysroot 则设 X5_SYSROOT=/；否则运行 python3 pull_sysroot.py <board_ip>" >&2
+    exit 1; }
 done
 
 # Workspace layout in docker:

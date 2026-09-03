@@ -69,6 +69,46 @@ IMAGE_SAMPLE_COUNT = 8
 CANONICAL_STEREO_TOPIC = "/sub_image_combine_raw"
 
 
+# ---------------------------------------------------------------------------
+# Cross-build sysroot. Mirrors the candidate resolution in build_x5_docker.sh:
+# explicit X5_SYSROOT (exact) -> .cache/x5_sysroot -> the machine's own native
+# / (an aarch64 dev host/board already carries /opt/tros/humble etc. at /). A
+# sysroot is usable iff it supplies every bind-mount path build_x5_docker.sh
+# mounts into the container.
+# ---------------------------------------------------------------------------
+SYSROOT_MARKERS = ("opt/tros/humble", "usr/include", "usr/share/eigen3",
+                   "usr/lib/aarch64-linux-gnu")
+
+
+def _sysroot_candidates() -> list:
+    env = os.environ.get("X5_SYSROOT")
+    if env:
+        return [env]
+    return [os.path.join(REPO_DIR, ".cache", "x5_sysroot"), "/"]
+
+
+def sysroot_dir() -> str:
+    """First candidate that provides every sysroot marker, else the .cache path.
+
+    ``os.path.join("/", "opt/tros/humble")`` is ``/opt/tros/humble``, so the
+    native-"/" candidate needs no special-casing.
+    """
+    for c in _sysroot_candidates():
+        if all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS):
+            return c
+    return os.path.join(REPO_DIR, ".cache", "x5_sysroot")
+
+
+def sysroot_ready() -> bool:
+    """True iff at least one candidate supplies every marker.
+
+    Mirrors build_x5_docker.sh: it picks the first ready candidate (honoring an
+    explicit X5_SYSROOT), so this answers "will the build find a usable sysroot".
+    """
+    return any(all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS)
+               for c in _sysroot_candidates())
+
+
 def host_ip(for_ip: str = None) -> str:
     """Primary non-loopback IPv4 of this host (used for NFS export address).
 
