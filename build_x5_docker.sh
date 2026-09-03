@@ -65,8 +65,11 @@ DOCKER_ARGS=(
   -v "$SYSROOT/usr/share/eigen3":/usr/share/eigen3:ro
   -v "$SYSROOT/usr/lib/aarch64-linux-gnu":/usr/lib/aarch64-linux-gnu:ro
 )
-if [ -n "$EXTRAS" ]; then
+if [ -n "$EXTRAS" ] && [ -d "$EXTRAS" ]; then
   for d in "$EXTRAS"/*/; do
+    # an empty extras dir leaves the literal '*/' glob pattern (no match) —
+    # skip it instead of letting the subsequent `cd` fail the whole build
+    [ -d "$d" ] || continue
     name="$(basename "$d")"
     [ "$name" = "drobotics_vio" ] && continue
     DOCKER_ARGS+=( -v "$(cd "$d" && pwd)":/ws/$name:ro )

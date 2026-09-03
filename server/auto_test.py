@@ -44,6 +44,13 @@ _BUILD_SCRIPT = os.path.abspath(
 _BUILD_EXTRAS = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".cache", "x5_extras")
 )
+# extra workspace pkgs that the cross-build find_package(... REQUIRED)s but are
+# NOT in /opt/tros/humble. Populated once into .cache/x5_extras; a fresh build
+# host with an empty extras dir self-heals here instead of failing the build.
+_BUILD_EXTRAS_REPOS = {
+    "irobot_create_msgs": "https://github.com/iRobotEducation/irobot_create_msgs.git",
+    "trial_guard": "https://github.com/D-Robotics/trial_guard.git",
+}
 _DEFAULT_BUILD_CMD = f"bash {_BUILD_SCRIPT} . {_BUILD_EXTRAS}"
 
 
@@ -82,6 +89,8 @@ _fetch_lock = threading.Lock()
 # serialises a board-sysroot pull: the scheduler thread, FastAPI workers and the
 # batch thread can all reach _run_build, and a ~600MB pull must not race itself
 _sysroot_lock = threading.Lock()
+# serialises the extras clone (same concurrency surface as the sysroot pull)
+_extras_lock = threading.Lock()
 # last mirror-clone failure (surfaced to the UI instead of silently failing)
 _mirror_error = ""
 # last auto-build failure (when a first deploy triggers the cross-build)
@@ -327,6 +336,41 @@ def _ensure_mirror(use_proxy: "bool | None" = None) -> bool:
         return False
     _mirror_error = ""
     return True
+
+
+def _ensure_extras(use_proxy: "bool | None" = None) -> "tuple[bool, str]":
+    """Clone the build-extras packages into _BUILD_EXTRAS if absent. (ok, detail).
+
+    The cross-build does `find_package(irobot_create_msgs/trial_guard REQUIRED)`
+    (see .cache/vio_mirror/CMakeLists.txt), and those repos are NOT in
+    /opt/tros/humble. A fresh build host has an empty .cache/x5_extras, so fill
+    it once. Idempotent + thread-safe; a hollow/partial clone is removed so the
+    next call retries instead of inheriting a broken package dir.
+    """
+    with _extras_lock:
+        present = set()
+        if os.path.isdir(_BUILD_EXTRAS):
+            present = {name for name in os.listdir(_BUILD_EXTRAS)
+                       if os.path.isdir(os.path.join(_BUILD_EXTRAS, name))}
+        missing = sorted(set(_BUILD_EXTRAS_REPOS) - present)
+        if not missing:
+            return True, "extras 已就绪"
+        os.makedirs(_BUILD_EXTRAS, exist_ok=True)
+        proxy_flag = get_config().get("use_proxy", False) if use_proxy is None else use_proxy
+        for name in missing:
+            dest = os.path.join(_BUILD_EXTRAS, name)
+            cmd = ["git", "clone", "--depth", "1", _BUILD_EXTRAS_REPOS[name], dest]
+            if proxy_flag:
+                cmd = ["proxychains4"] + cmd
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            except Exception as e:  # noqa: BLE001
+                shutil.rmtree(dest, ignore_errors=True)
+                return False, f"extras '{name}' 拉取异常: {e}"
+            if r.returncode != 0:
+                shutil.rmtree(dest, ignore_errors=True)
+                return False, f"extras '{name}' 拉取失败(rc={r.returncode}): {(r.stderr or r.stdout)[-300:]}"
+        return True, "extras 已就绪"
 
 
 def _git_auth_env(token: str, username: str = "x-access-token"):
@@ -817,6 +861,9 @@ def _run_build(commit: str, board_ip: str = None) -> tuple:
     # prerequisites; a custom build_cmd owns its own deps.
     if _build_script_path(build_cmd):
         ok, detail = ensure_sysroot(board_ip)
+        if not ok:
+            return False, detail
+        ok, detail = _ensure_extras()
         if not ok:
             return False, detail
     try:
