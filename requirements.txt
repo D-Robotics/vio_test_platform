@@ -2,6 +2,7 @@ fastapi
 uvicorn
 paramiko
 websockets
+playwright
 mcap
 mcap-ros2-support
 pyyaml
