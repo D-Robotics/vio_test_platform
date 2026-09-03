@@ -357,19 +357,36 @@ def _ensure_extras(use_proxy: "bool | None" = None) -> "tuple[bool, str]":
             return True, "extras 已就绪"
         os.makedirs(_BUILD_EXTRAS, exist_ok=True)
         proxy_flag = get_config().get("use_proxy", False) if use_proxy is None else use_proxy
-        for name in missing:
-            dest = os.path.join(_BUILD_EXTRAS, name)
-            cmd = ["git", "clone", "--depth", "1", _BUILD_EXTRAS_REPOS[name], dest]
-            if proxy_flag:
-                cmd = ["proxychains4"] + cmd
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-            except Exception as e:  # noqa: BLE001
-                shutil.rmtree(dest, ignore_errors=True)
-                return False, f"extras '{name}' 拉取异常: {e}"
-            if r.returncode != 0:
-                shutil.rmtree(dest, ignore_errors=True)
-                return False, f"extras '{name}' 拉取失败(rc={r.returncode}): {(r.stderr or r.stdout)[-300:]}"
+        # A host-level credential.helper (gh/store) must NOT inject a token whose
+        # account lacks access to a repo — GitHub answers 403. Force it off, then
+        # hand git the service github_token (now it is present) so a PRIVATE repo
+        # like D-Robotics/trial_guard clones cleanly. Stay anonymous when no token.
+        env = dict(os.environ)
+        env["GIT_CONFIG_COUNT"] = "1"
+        env["GIT_CONFIG_KEY_0"] = "credential.helper"
+        env["GIT_CONFIG_VALUE_0"] = ""
+        auth_tmp = None
+        token = (get_config().get("github_token") or "").strip()
+        if token:
+            env_up, auth_tmp = _git_auth_env(token)
+            env.update(env_up)
+        try:
+            for name in missing:
+                dest = os.path.join(_BUILD_EXTRAS, name)
+                cmd = ["git", "clone", "--depth", "1", _BUILD_EXTRAS_REPOS[name], dest]
+                if proxy_flag:
+                    cmd = ["proxychains4"] + cmd
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
+                except Exception as e:  # noqa: BLE001
+                    shutil.rmtree(dest, ignore_errors=True)
+                    return False, f"extras '{name}' 拉取异常: {e}"
+                if r.returncode != 0:
+                    shutil.rmtree(dest, ignore_errors=True)
+                    return False, f"extras '{name}' 拉取失败(rc={r.returncode}): {(r.stderr or r.stdout)[-300:]}"
+        finally:
+            if auth_tmp:
+                shutil.rmtree(auth_tmp, ignore_errors=True)
         return True, "extras 已就绪"
 
 

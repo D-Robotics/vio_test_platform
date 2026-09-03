@@ -63,3 +63,47 @@ def test_ensure_extras_removes_hollow_on_failure(monkeypatch, tmp_path):
     # no hollow dirs left behind
     import os
     assert os.listdir(str(tmp_path)) == []
+
+
+def test_ensure_extras_forces_credential_helper_off(monkeypatch, tmp_path):
+    # no token configured -> host credential.helper must be forced off so a
+    # host 'gh'/store credential never injects a token lacking access (403)
+    _blank_extras(monkeypatch, tmp_path)
+    envs = []
+
+    def fake_run(cmd, **kw):
+        envs.append(kw.get("env"))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(auto_test.subprocess, "run", fake_run)
+    auto_test._ensure_extras()
+    for env in envs:
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+        assert env["GIT_CONFIG_VALUE_0"] == ""
+        assert "GIT_ASKPASS" not in env  # no token -> no askpass
+
+
+def test_ensure_extras_uses_token_when_present(monkeypatch, tmp_path):
+    _blank_extras(monkeypatch, tmp_path)
+    monkeypatch.setattr(auto_test, "get_config",
+                        lambda: {"use_proxy": False, "github_token": "secret-token"})
+    envs = []
+
+    def fake_run(cmd, **kw):
+        envs.append(kw.get("env"))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(auto_test.subprocess, "run", fake_run)
+    # _git_auth_env writes a temp askpass file — stub it out
+    monkeypatch.setattr(
+        auto_test, "_git_auth_env",
+        lambda token, username="x-access-token": (
+            {"GIT_ASKPASS": "/tmp/askpass", "GIT_ASKPASS_BY_TOKEN": token,
+             "GIT_CONFIG_COUNT": "1",
+             "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": ""},
+            None))
+    auto_test._ensure_extras()
+    for env in envs:
+        assert env["GIT_ASKPASS"] == "/tmp/askpass"  # token drives auth
+        assert env["GIT_CONFIG_VALUE_0"] == ""
