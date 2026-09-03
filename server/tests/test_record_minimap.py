@@ -77,3 +77,28 @@ def test_loopback_jpeg_gets_composited(tmp_path):
     before = im.tobytes()
     im.paste(mm, (im.width - mm.width - rec._border, im.height - mm.height - rec._border), mm)
     assert im.tobytes() != before
+
+
+def test_run_surfaces_record_error(tmp_path):
+    """A recording failure must be exposed, not silently swallowed.
+
+    Regression: record.py lazily `import websockets` inside `_record()`; when the
+    dep was missing the ImportError hit `_run`'s bare `except Exception: pass`,
+    so every run silently captured 0 frames and no video showed in stats. This
+    proves the failure now lands in `last_error` and `record_error.txt`.
+    """
+    rec = make_recorder(tmp_path)
+
+    # Simulate the lazy-import-failure path by forcing `_record` to raise before
+    # it ever reaches the (possibly-uninstalled) websockets import.
+    import asyncio
+
+    async def failing_record():
+        raise RuntimeError("import websockets: No module named 'websockets'")
+
+    rec._record = failing_record
+    rec._run()
+    assert "RuntimeError" in rec.last_error
+    err_file = os.path.join(rec.outdir, "record_error.txt")
+    assert os.path.isfile(err_file)
+    assert "websockets" in open(err_file).read()

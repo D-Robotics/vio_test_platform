@@ -11,6 +11,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 
@@ -131,8 +132,19 @@ class OvWebRecorder:
     def _run(self):
         try:
             asyncio.run(self._record())
-        except Exception:  # noqa: BLE001 - recording must never break the batch
-            pass
+        except Exception as e:  # noqa: BLE001 - recording must never break the batch
+            # Never let recording break the batch, but DON'T hide the failure:
+            # the lazy `import websockets` inside _record() used to die here and
+            # silently yield 0 frames -> no video in stats. Surface it next to
+            # the run and on stderr so a missing dep / bad connection is visible.
+            self.last_error = f"{type(e).__name__}: {e}"
+            print(f"[record] {self.last_error}", file=sys.stderr, flush=True)
+            try:
+                os.makedirs(self.outdir, exist_ok=True)
+                with open(os.path.join(self.outdir, "record_error.txt"), "w") as f:
+                    f.write(self.last_error)
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _record(self):
         import websockets

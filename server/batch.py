@@ -511,6 +511,13 @@ def _run_batch(batch: BatchRun):
             if video and os.path.isfile(video):
                 item.stats["video_mp4"] = "video.mp4"
                 item.stats["video_frames"] = video_frames
+            rec_err = os.path.join(_item_outdir(batch, item), "record_error.txt")
+            if os.path.isfile(rec_err):
+                try:
+                    with open(rec_err) as f:
+                        item.stats["record_error"] = f.read().strip()
+                except Exception:  # noqa: BLE001
+                    pass
             _write_meta(item, batch)
             _save_state(batch)
         except Exception as e:  # noqa: BLE001

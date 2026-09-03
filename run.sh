@@ -127,7 +127,7 @@ can_user_apt() { [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null || [ -t 0 ]; }
 check_deps() {
   echo "[test_platform] python deps (interpreter: $("$PY" --version 2>&1), target: vendor_libs/)"
   local missing=""
-  for m in fastapi uvicorn paramiko mcap mcap_ros2 yaml PIL numpy matplotlib multipart; do
+  for m in fastapi uvicorn paramiko mcap mcap_ros2 yaml PIL numpy matplotlib multipart websockets; do
     if import_ok "$m"; then echo "  ok    $m"; else echo "  MISS  $m"; missing="$missing $m"; fi
   done
   echo "[test_platform] required system deps"
