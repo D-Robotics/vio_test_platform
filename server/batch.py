@@ -527,6 +527,23 @@ def _run_batch(batch: BatchRun):
     _save_state(batch)
 
 
+def _board_output_ready(ip: str) -> bool:
+    """True iff the current board run has flushed a real VIO trajectory.
+
+    The VIO writes ov_est.tum when the bag is exhausted / on shutdown, so its
+    presence (non-empty) is the authoritative "the run actually produced output"
+    signal. Process-pid signals (vio==0) can fire a few seconds early (a stale
+    pgrep or a late flush), which used to make the platform SFTP an empty
+    `current/output` and log 0-byte logs — the "empty logs / empty stats" bug.
+    """
+    from .boards import Ssh as _Ssh
+
+    prog = f"-s {config.BOARD_CURRENT_LINK}/output/trajectory/ov_est.tum"
+    with _Ssh(ip, timeout=15) as s:
+        r = s.run(f"test {prog} && echo READY || echo NOT")
+    return "READY" in r["out"].split()
+
+
 def _wait_finish(ip: str, expect_bag_play: bool = True):
     """Wait until the VIO run ends on the board. Returns (ok, err).
 
@@ -542,8 +559,15 @@ def _wait_finish(ip: str, expect_bag_play: bool = True):
         while; without this guard we'd collect an empty result instantly)
       - if VIO never appears within the boot grace, fail fast instead of
         waiting the full _MAX_RUN_S
+
+    Output-confirmation guard:
+      - a bare vio==0 is not trustworthy on its own: the node can be reported
+        gone a few seconds before ov_est.tum is flushed, or the pgrep can blip.
+        Once vio==0 is seen we wait a bounded grace for the trajectory file to
+        appear, so a still-flushing run is NOT cut off and collected empty.
     """
     _VIO_BOOT_GRACE_S = 180
+    _OUTPUT_GRACE_S = 180  # after vio==0, how long to wait for ov_est.tum to flush
     deadline = time.time() + _MAX_RUN_S
     boot_deadline = time.time() + _VIO_BOOT_GRACE_S
     seen_vio = False
@@ -568,9 +592,28 @@ def _wait_finish(ip: str, expect_bag_play: bool = True):
             # PRINT_ERROR cause instead of hanging until the boot grace
             return False, f"VIO crashed at startup: {crash.get('cause') or crash.get('died') or 'see vio.log'}"
         if seen_vio and vio == 0:
-            # VIO exited after having run -> bag consumed (offline) or stopped
+            # VIO gone. Confirm the trajectory actually flushed before declaring
+            # done; otherwise a late flush gets collected as an empty result.
             if crash:
                 return False, f"VIO crashed during run: {crash.get('cause') or crash.get('died') or 'see vio.log'}"
+            if _board_output_ready(ip):
+                return True, ""
+            # no output yet: wait a bounded grace for it. If the node is truly
+            # still alive (detection blip), vio>0 resumes normal waiting below.
+            grace_deadline = time.time() + _OUTPUT_GRACE_S
+            while time.time() < grace_deadline:
+                time.sleep(_WAIT_POLL_S)
+                try:
+                    st = backtest.backtest_status(ip)
+                except Exception:  # noqa: BLE001
+                    continue
+                if st["processes"].get("vio", 0) > 0:
+                    seen_vio = True
+                    break  # node is actually alive; go back to normal waiting
+                if _board_output_ready(ip):
+                    return True, ""
+            # grace expired with neither output nor a live node: a genuinely
+            # empty run — accept it so we don't hang a no-output case forever.
             return True, ""
         if not seen_vio and time.time() > boot_deadline:
             return False, f"VIO process never appeared within {_VIO_BOOT_GRACE_S}s of launch"
@@ -580,9 +623,9 @@ def _wait_finish(ip: str, expect_bag_play: bool = True):
             try:
                 st2 = backtest.backtest_status(ip)
                 if st2["processes"].get("bag_play", 0) == 0:
-                    return True, ""
+                    return _board_output_ready(ip), ""
             except Exception:  # noqa: BLE001
-                return True, ""
+                return _board_output_ready(ip), ""
         time.sleep(_WAIT_POLL_S)
     return False, "timeout waiting for run to finish"
 
