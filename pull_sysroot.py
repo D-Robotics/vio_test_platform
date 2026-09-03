@@ -17,26 +17,37 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, ".cache", "x5_sysroot.tar.gz")
 EXTRACT_DIR = os.path.join(HERE, ".cache", "x5_sysroot")
 
-TAR_ARGS = [
-    "tar -czf - --hard-dereference -C /",
+# Everything the cross-build bind-mounts (see build_x5_docker.sh): the 4 sysroot
+# trees plus the header/lib subdirs drobotics_vio finds there. Wildcards are
+# expanded by `find` (NOT `tar --wildcards`, which does not glob during
+# creation), and every entry is guarded so a family/dir missing on a given board
+# is skipped rather than aborting the whole pull.
+PROTECTED_DIRS = (
     "opt/tros/humble",
-    "usr/include/eigen3 usr/include/boost usr/include/opencv4",
-    "usr/include/glog usr/include/gflags",
+    "usr/include/eigen3", "usr/include/boost", "usr/include/opencv4",
+    "usr/include/glog", "usr/include/gflags",
     "usr/share/eigen3",
-    "--wildcards",
-    "'usr/lib/aarch64-linux-gnu/libopencv_*'",
-    "'usr/lib/aarch64-linux-gnu/libboost_*'",
-    "'usr/lib/aarch64-linux-gnu/libglog*'",
-    "'usr/lib/aarch64-linux-gnu/libgflags*'",
-    "'usr/lib/aarch64-linux-gnu/libceres*'",
-    "'usr/lib/aarch64-linux-gnu/cmake'",
-    "'usr/lib/aarch64-linux-gnu/pkgconfig'",
-]
+    "usr/lib/aarch64-linux-gnu/cmake", "usr/lib/aarch64-linux-gnu/pkgconfig",
+)
+LIB_GLOBS = ("libopencv_*", "libboost_*", "libglog*", "libgflags*", "libceres*")
+
+
+def _tar_cmd() -> str:
+    glob_cond = " -o ".join(f"-name '{g}'" for g in LIB_GLOBS)
+    dirs = " ".join(f"'{d}'" for d in PROTECTED_DIRS)
+    return (
+        "cd / && {\n"
+        f"  find usr/lib/aarch64-linux-gnu -maxdepth 1 \\( {glob_cond} \\) -print\n"
+        f"  for x in {dirs}; do\n"
+        "    [ -d \"$x\" ] && printf '%s\\n' \"$x\"\n"
+        "  done\n"
+        "} | tar -czf - --hard-dereference -T -"
+    )
 
 
 def main():
     ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.15"
-    cmd = " ".join(TAR_ARGS)
+    cmd = _tar_cmd()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with Ssh(ip, timeout=15) as s:
         stdin, stdout, stderr = s._cli.exec_command(cmd, timeout=1800)
