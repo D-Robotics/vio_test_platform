@@ -10,10 +10,22 @@ PORT = int(os.environ.get("PORT", "1234"))
 
 # Root directory that contains dataset dirs (each dataset = a dir holding
 # ros2bag_vio/ and/or stereo_auto_gen/). Override with DATA_ROOT env.
-DATA_ROOT = os.environ.get(
-    "DATA_ROOT",
-    "/home/hobot/work/cc_ws/tros_ws",
-)
+def canonical_data_root(raw: str) -> str:
+    """Resolve .. and symlinks so the NFS export and the board mount use the SAME path.
+
+    DATA_ROOT is often given as a relative/``..`` form (e.g.
+    ``.../vio_test_platform/../vio_data``). The NFS server matches a client mount
+    against the export name literally on the wire — it does NOT collapse ``..`` —
+    so an un-normalized DATA_ROOT yields "access denied" even after the export is set
+    up. realpath still works for non-existent dirs (it resolves lexically).
+    """
+    try:
+        return os.path.realpath(raw)
+    except OSError:
+        return os.path.abspath(raw)
+
+
+DATA_ROOT = canonical_data_root(os.environ.get("DATA_ROOT", "/home/hobot/work/cc_ws/tros_ws"))
 
 # Board registry + run records live inside the project
 STATE_DIR = os.path.join(REPO_DIR, "state")

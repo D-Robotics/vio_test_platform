@@ -40,6 +40,10 @@ done
 
 export PORT="${PORT:-1234}"
 export DATA_ROOT="${DATA_ROOT:-/home/hobot/work/cc_ws/tros_ws}"
+# Canonicalize so /etc/exports (setup_nfs.sh) and the board mount share ONE path.
+# A `..`/relative form otherwise makes the NFS server deny the mount ("access
+# denied"), because it matches the client mount against the export name literally.
+export DATA_ROOT="$(realpath -m -- "${DATA_ROOT}" 2>/dev/null || printf '%s' "$DATA_ROOT")"
 PY="${PYTHON:-python3}"
 
 # ------------------------------------------------------------------ interpreter
