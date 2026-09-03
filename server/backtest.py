@@ -57,12 +57,17 @@ def env_status() -> dict:
             export_detail = "exportfs not available or nfs-kernel-server not installed"
     except Exception as e:  # noqa: BLE001
         export_detail = str(e)
+    # One-liner the operator can copy-paste. setup_nfs.sh reads DATA_ROOT from the
+    # environment, so it must be set (not hardcoded to the %PATH default).
+    setup_nfs = os.path.join(config.REPO_DIR, "setup_nfs.sh")
+    setup_command = f"sudo DATA_ROOT={config.DATA_ROOT} bash {setup_nfs}"
     return {
         "host_ip": host,
         "data_root": config.DATA_ROOT,
         "nfs_exported": nfs_exported,
         "nfs_detail": export_detail,
-        "setup_hint": "run: sudo bash test_platform/setup_nfs.sh" if not nfs_exported else "",
+        "setup_hint": f"run: {setup_command}" if not nfs_exported else "",
+        "setup_command": setup_command if not nfs_exported else "",
         "board_mount": config.BOARD_MOUNT,
         "ov_web_port": config.OV_WEB_PORT,
     }
@@ -111,9 +116,30 @@ def mount_board(ip: str) -> dict:
         cmd = f"mkdir -p {mnt} && mount -t nfs -o nolock,proto=tcp {host}:{config.DATA_ROOT} {mnt}"
         r = s.run(cmd, timeout=60)
         check = s.run(f"mountpoint -q {mnt} && echo MOUNTED || echo NOTMOUNTED")
-        mounted = "MOUNTED" in check["out"]
+        # split() so a failed mount ("NOTMOUNTED") does NOT match — "MOUNTED" is a
+        # substring of "NOTMOUNTED", so `"MOUNTED" in out` was always True on failure.
+        mounted = "MOUNTED" in check["out"].split()
         return {"ok": mounted, "already": False, "board_path": mnt if mounted else None,
                 "detail": (r["out"] + r["err"]).strip() or (f"mounted {host}:{config.DATA_ROOT} -> {mnt}" if mounted else "mount failed")}
+
+
+def _board_dataset_ready(ip: str, mnt_ds: str) -> "tuple[bool, str]":
+    """True iff the board actually sees the dataset artifacts at mnt_ds.
+
+    The NFS mount can silently fail (DATA_ROOT not exported on the host) or drop
+    after a board reboot; launch.sh then yields a run with blank logs and only a
+    late 'config_path does not exist'. Verify the two files the launch chain
+    depends on BEFORE building the script so a bad mount surfaces as a clear
+    actionable error instead of a silent empty run.
+    """
+    required = ("stereo_auto_gen/estimator_config.yaml", "ros2bag_vio/metadata.yaml")
+    checks = "; ".join(f"[ -f '{mnt_ds}/{p}' ] || echo 'MISS::{p}'" for p in required)
+    with Ssh(ip, timeout=15) as s:
+        r = s.run(checks, timeout=20)
+    missing = [ln.split("::", 1)[1] for ln in r["out"].splitlines() if ln.strip().startswith("MISS::")]
+    if missing:
+        return False, "missing " + ", ".join(missing)
+    return True, ""
 
 
 # ------------------------------------------------------------------ static TF from camchain
@@ -303,12 +329,24 @@ def build_launch_script(ip: str, dataset: str, image_topic: str = None, extra_ar
     ds = datasets.get_dataset(dataset)
     # board-visible path of the dataset (existing NFS mount preferred, else /mnt/vio_datasets)
     root_on_board = board_mounted_path(ip)
+    mount_detail = ""
     if root_on_board is None:
         m = mount_board(ip)
+        mount_detail = m.get("detail", "")
         root_on_board = m.get("board_path")
     if not root_on_board:
-        return {"ok": False, "detail": "data root not mounted on board (run 挂载数据 first)"}
+        hint = ""
+        if "access denied" in mount_detail.lower():
+            hint = (" — DATA_ROOT is not NFS-exported on the host; run "
+                    "`sudo bash setup_nfs.sh` (with DATA_ROOT set) or start via "
+                    "`run.sh --data-root=<dir>`, then 挂载数据 / retry")
+        return {"ok": False, "detail": f"data root not mounted on board: {mount_detail or '(run 挂载数据 first)'}{hint}"}
     mnt_ds = f"{root_on_board}/{dataset}"
+    ok, why = _board_dataset_ready(ip, mnt_ds)
+    if not ok:
+        return {"ok": False,
+                "detail": f"dataset not visible on board at {mnt_ds}: {why} — ensure DATA_ROOT is NFS-exported "
+                          f"(sudo bash setup_nfs.sh) and mounted on the board before running"}
     topics = datasets.pick_default_topics(dataset)
     image_topic = image_topic or topics.get("image")
     # `sub_from_compressed_image` must reflect the BAG's image encoding, not the
