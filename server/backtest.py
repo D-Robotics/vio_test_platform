@@ -99,12 +99,8 @@ def board_mounted_path(ip: str) -> "str | None":
     return None
 
 
-def mount_board(ip: str) -> dict:
-    host = config.host_ip(for_ip=ip)
-    mnt = config.BOARD_MOUNT
-    existing = board_mounted_path(ip)
-    if existing:
-        return {"ok": True, "already": True, "board_path": existing, "detail": f"reusing existing NFS mount: {existing}"}
+def _attempt_mount(host: str, mnt: str, ip: str) -> dict:
+    """One attempt at NFS-mounting the host DATA_ROOT on the board at mnt."""
     with Ssh(ip) as s:
         # board needs nfs client
         r = s.run("which mount.nfs >/dev/null 2>&1 || dpkg -s nfs-common >/dev/null 2>&1 && echo HAS_NFS || echo NO_NFS")
@@ -121,6 +117,52 @@ def mount_board(ip: str) -> dict:
         mounted = "MOUNTED" in check["out"].split()
         return {"ok": mounted, "already": False, "board_path": mnt if mounted else None,
                 "detail": (r["out"] + r["err"]).strip() or (f"mounted {host}:{config.DATA_ROOT} -> {mnt}" if mounted else "mount failed")}
+
+
+def _auto_export_host() -> tuple:
+    """Provision the host NFS export for DATA_ROOT via passwordless sudo (never prompt).
+
+    Returns (ok, detail). Only uses ``sudo -n`` so a server thread never blocks on a
+    password prompt: if the platform user lacks passwordless sudo it returns False
+    and the operator must run ``sudo bash setup_nfs.sh`` (or start via run.sh).
+    setup_nfs.sh reads DATA_ROOT from the environment, so it is passed through sudo.
+    """
+    import subprocess
+
+    setup_nfs = os.path.join(config.REPO_DIR, "setup_nfs.sh")
+    if not os.path.isfile(setup_nfs):
+        return False, "setup_nfs.sh not found"
+    try:
+        if subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=10).returncode != 0:
+            return False, "no passwordless sudo"
+        r = subprocess.run(["sudo", "-n", f"DATA_ROOT={config.DATA_ROOT}", "bash", setup_nfs],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout or "").strip()[-120:]
+        return True, "exported"
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+
+
+def mount_board(ip: str) -> dict:
+    host = config.host_ip(for_ip=ip)
+    mnt = config.BOARD_MOUNT
+    existing = board_mounted_path(ip)
+    if existing:
+        return {"ok": True, "already": True, "board_path": existing, "detail": f"reusing existing NFS mount: {existing}"}
+    result = _attempt_mount(host, mnt, ip)
+    # Self-heal: an "access denied" mount means DATA_ROOT isn't NFS-exported on the
+    # host. Auto-provision it (passwordless sudo) and retry once, so a backtest does
+    # not require the operator to set up NFS by hand first.
+    if not result["ok"] and "access denied" in result["detail"].lower():
+        ok, detail = _auto_export_host()
+        if ok:
+            result = _attempt_mount(host, mnt, ip)
+            if not result["ok"]:
+                result["detail"] = f"{result['detail']} (auto-export ran: {detail})"
+        else:
+            result["detail"] = f"{result['detail']} — auto NFS export failed: {detail}; run `sudo bash setup_nfs.sh` or start via run.sh"
+    return result
 
 
 def _board_dataset_ready(ip: str, mnt_ds: str) -> "tuple[bool, str]":

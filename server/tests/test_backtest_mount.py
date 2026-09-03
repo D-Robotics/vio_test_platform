@@ -46,10 +46,38 @@ class _FakeSsh:
 def test_mount_board_returns_failure_when_mountpoint_check_is_NOTMOUNTED(monkeypatch):
     """A failed mount yields mountpoint -> NOTMOUNTED; it must NOT be read as success."""
     monkeypatch.setattr(backtest, "Ssh", _FakeSsh)
+    monkeypatch.setattr(backtest, "_auto_export_host", lambda: (False, "no passwordless sudo"))
     m = backtest.mount_board("10.64.91.57")
     assert m["ok"] is False
     assert m["board_path"] is None
     assert "access denied" in m["detail"].lower()
+
+
+def test_mount_board_auto_exports_and_retries_on_access_denied(monkeypatch):
+    """When the only blocker is that DATA_ROOT isn't exported, mount_board must
+    auto-provision the export (passwordless sudo) and retry the mount, so a backtest
+    mounts on its own without the operator clicking anything."""
+    class Heal(_FakeSsh):
+        # class-level: _attempt_mount fires a fresh Ssh(...) per call, so instance
+        # state would reset between the initial attempt and the retry.
+        _mounts = 0
+
+        def _out(self, cmd):
+            if "mkdir" in cmd and "mount -t nfs" in cmd:
+                Heal._mounts += 1
+                if Heal._mounts == 1:
+                    return {"out": "", "rc": 32, "err": "mount.nfs: access denied by server while mounting ..."}
+                return {"out": "", "rc": 0, "err": ""}
+            if "mountpoint -q" in cmd:
+                return {"out": "MOUNTED\n" if Heal._mounts >= 2 else "NOTMOUNTED\n", "rc": 0, "err": ""}
+            return super()._out(cmd)
+
+    monkeypatch.setattr(backtest, "Ssh", Heal)
+    monkeypatch.setattr(backtest, "_auto_export_host", lambda: (True, "exported"))
+    m = backtest.mount_board("10.64.91.57")
+    assert m["ok"] is True
+    assert m["board_path"] == config.BOARD_MOUNT
+    assert m["already"] is False
 
 
 def test_build_launch_script_fails_fast_when_data_root_not_exported(monkeypatch):
