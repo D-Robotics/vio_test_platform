@@ -165,7 +165,14 @@ install_sys() {  # required system packages (ffmpeg + NFS server/export)
   fi
   if ! have exportfs || ! nfs_export_covers; then
     echo "[test_platform] installing/exporting NFS for $DATA_ROOT ..."
-    su_run bash "$DIR/setup_nfs.sh" || die "NFS setup failed; run: sudo bash $DIR/setup_nfs.sh"
+    # sudo strips env, so pass DATA_ROOT through explicitly (setup_nfs.sh validates it).
+    if [ "$(id -u)" = "0" ]; then
+      DATA_ROOT="$DATA_ROOT" bash "$DIR/setup_nfs.sh"
+    elif sudo -n true 2>/dev/null; then
+      sudo -n "DATA_ROOT=$DATA_ROOT" bash "$DIR/setup_nfs.sh"
+    else
+      su_run bash "$DIR/setup_nfs.sh" || die "NFS setup failed; run: sudo DATA_ROOT=$DATA_ROOT bash $DIR/setup_nfs.sh"
+    fi
   fi
   echo "[test_platform] system deps done."
 }

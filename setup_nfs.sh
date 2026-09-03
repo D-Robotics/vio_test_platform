@@ -6,6 +6,14 @@ DATA_ROOT="${DATA_ROOT:-/home/hobot/work/cc_ws/tros_ws}"
 # Canonicalize so the export path equals the board's mount source (a `..` form
 # breaks the mount even if /etc/exports is set).
 DATA_ROOT="$(realpath -m -- "${DATA_ROOT}" 2>/dev/null || printf '%s' "$DATA_ROOT")"
+# `sudo bash setup_nfs.sh` drops the DATA_ROOT env var, so we'd fall back to the
+# default path and write a bogus export that makes `exportfs -ra` fail. Fail fast
+# and tell the operator to pass DATA_ROOT through sudo instead.
+if [ ! -d "$DATA_ROOT" ]; then
+    echo "DATA_ROOT '$DATA_ROOT' is not an existing directory." >&2
+    echo "sudo strips env vars — pass it explicitly: sudo DATA_ROOT=<path> bash ${BASH_SOURCE[0]}" >&2
+    exit 1
+fi
 if ! dpkg -s nfs-kernel-server >/dev/null 2>&1; then
     echo "installing nfs-kernel-server ..."
     apt-get update && apt-get install -y nfs-kernel-server
