@@ -15,16 +15,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import pull_sysroot
 
 
-def test_tar_cmd_uses_find_not_wildcards():
+def test_tar_cmd_pulls_full_trees_guarded():
     cmd = pull_sysroot._tar_cmd()
     assert "--wildcards" not in cmd
     assert "cd / &&" in cmd
-    assert "find usr/lib/aarch64-linux-gnu -maxdepth 1" in cmd
-    assert "-T -" in cmd
-    for g in pull_sysroot.LIB_GLOBS:
-        assert f"-name '{g}'" in cmd
-    for d in pull_sysroot.PROTECTED_DIRS:
+    # each bind-mount tree is pulled in FULL (guarded so an absent tree is skipped,
+    # not aborted) — a curated glob of headers/libs keeps missing system dev
+    # packages (python3, openssl, tinyxml2, ...) that break the cross-build.
+    for d in pull_sysroot.SYSROOT_TREES:
         assert f"'{d}'" in cmd
+    assert "-T -" in cmd
+    # guarded: only dirs that actually exist are emitted
+    assert '[ -d "$x" ]' in cmd
 
 
 def test_tar_cmd_pipeline_succeeds_with_absent_lib(tmp_path):

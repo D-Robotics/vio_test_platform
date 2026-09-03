@@ -63,10 +63,20 @@ fi
 # / — recognise that instead of forcing a pull. Only pull from the board when no
 # candidate satisfies every bind-mount path below.
 MARKERS="opt/tros/humble usr/include usr/share/eigen3 usr/lib/aarch64-linux-gnu"
+# The ament find_package closure of the cross-build needs the target's Python dev
+# (rosidl_generator_py -> find_package(PythonLibs)) and OpenSSL headers
+# (rmw_fastrtps -> fastrtps -> find_package(OpenSSL)). A curated sysroot holding only
+# the mount dirs above is NOT usable — it fails mid-build with a random
+# "Could NOT find <pkg>". Since the board builds natively, a full sysroot has these.
+CONTENT="usr/include/python3.10 usr/lib/aarch64-linux-gnu/libpython3.10.so usr/include/openssl/ssl.h"
 
-_sysroot_ok() { # $1 = candidate dir; every marker must be a dir under it
+_sysroot_ok() { # $1 = candidate dir; every marker + content file must exist under it
+  local p
   for p in $MARKERS; do
     [ -d "$1/$p" ] || return 1
+  done
+  for p in $CONTENT; do
+    [ -e "$1/$p" ] || return 1
   done
   return 0
 }
@@ -77,9 +87,9 @@ if [ -z "${X5_SYSROOT:-}" ] && ! _sysroot_ok "$SYSROOT"; then
   fi
 fi
 
-for p in $MARKERS; do
+for p in $MARKERS $CONTENT; do
   [ -e "$SYSROOT/$p" ] || {
-    echo "sysroot missing: $SYSROOT/$p — 机器已原生带 aarch64 sysroot 则设 X5_SYSROOT=/；否则运行 python3 pull_sysroot.py <board_ip>" >&2
+    echo "sysroot missing: $SYSROOT/$p — 机器已原生带完整 aarch64 sysroot 则设 X5_SYSROOT=/；否则重新运行 python3 pull_sysroot.py <board_ip>（旧 sysroot 可能不完整）" >&2
     exit 1; }
 done
 

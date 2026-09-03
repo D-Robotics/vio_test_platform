@@ -17,27 +17,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, ".cache", "x5_sysroot.tar.gz")
 EXTRACT_DIR = os.path.join(HERE, ".cache", "x5_sysroot")
 
-# Everything the cross-build bind-mounts (see build_x5_docker.sh): the 4 sysroot
-# trees plus the header/lib subdirs drobotics_vio finds there. Wildcards are
-# expanded by `find` (NOT `tar --wildcards`, which does not glob during
-# creation), and every entry is guarded so a family/dir missing on a given board
-# is skipped rather than aborting the whole pull.
-PROTECTED_DIRS = (
-    "opt/tros/humble",
-    "usr/include/eigen3", "usr/include/boost", "usr/include/opencv4",
-    "usr/include/glog", "usr/include/gflags",
+# The complete native trees the cross-build bind-mounts (see build_x5_docker.sh).
+# Pull each TREE in full — not a curated glob of headers/libs. The board builds the
+# VIO natively, so its whole /usr/include + /usr/lib/aarch64-linux-gnu IS a valid
+# sysroot; a curated subset keeps missing system dev packages (python3 dev, openssl,
+# tinyxml2, ...) that the ament find_package closure pulls in, so the cross-build
+# dies at rosidl_generate_interfaces / rmw_fastrtps with a bewildering
+# "Could NOT find <pkg> (missing: <INCLUDE/LIB>)". Every entry is guarded so a tree
+# absent on a given board is skipped rather than aborting the whole pull.
+SYSROOT_TREES = (
+    "usr/include",
+    "usr/lib/aarch64-linux-gnu",
     "usr/share/eigen3",
-    "usr/lib/aarch64-linux-gnu/cmake", "usr/lib/aarch64-linux-gnu/pkgconfig",
+    "opt/tros/humble",
 )
-LIB_GLOBS = ("libopencv_*", "libboost_*", "libglog*", "libgflags*", "libceres*")
 
 
 def _tar_cmd() -> str:
-    glob_cond = " -o ".join(f"-name '{g}'" for g in LIB_GLOBS)
-    dirs = " ".join(f"'{d}'" for d in PROTECTED_DIRS)
+    dirs = " ".join(f"'{d}'" for d in SYSROOT_TREES)
     return (
         "cd / && {\n"
-        f"  find usr/lib/aarch64-linux-gnu -maxdepth 1 \\( {glob_cond} \\) -print\n"
         f"  for x in {dirs}; do\n"
         "    [ -d \"$x\" ] && printf '%s\\n' \"$x\"\n"
         "  done\n"

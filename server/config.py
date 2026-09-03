@@ -80,6 +80,15 @@ CANONICAL_STEREO_TOPIC = "/sub_image_combine_raw"
 SYSROOT_MARKERS = ("opt/tros/humble", "usr/include", "usr/share/eigen3",
                    "usr/lib/aarch64-linux-gnu")
 
+# Content beyond the bind-mount dirs that a usable cross-build sysroot MUST carry:
+# an aarch64 Python dev (rosidl_generator_py calls find_package(PythonLibs)) and
+# OpenSSL headers (rmw_fastrtps -> fastrtps -> find_package(OpenSSL)). A curated
+# pull that has only the mount dirs passes SYSROOT_MARKERS yet still fails the
+# build, so readiness requires these too — an old/incomplete sysroot then re-pulls.
+_SYSROOT_CONTENT = ("usr/include/python3.10",
+                    "usr/lib/aarch64-linux-gnu/libpython3.10.so",
+                    "usr/include/openssl/ssl.h")
+
 
 def _sysroot_candidates() -> list:
     env = os.environ.get("X5_SYSROOT")
@@ -88,26 +97,38 @@ def _sysroot_candidates() -> list:
     return [os.path.join(REPO_DIR, ".cache", "x5_sysroot"), "/"]
 
 
+def _sysroot_complete(c: str) -> bool:
+    """True iff candidate `c` is a usable sysroot: every bind-mount tree plus the
+    native dev files the cross-build dependency graph needs (python dev, openssl).
+    """
+    if not all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS):
+        return False
+    if not os.path.isdir(os.path.join(c, _SYSROOT_CONTENT[0])):
+        return False
+    if not all(os.path.isfile(os.path.join(c, p)) for p in _SYSROOT_CONTENT[1:]):
+        return False
+    return True
+
+
 def sysroot_dir() -> str:
-    """First candidate that provides every sysroot marker, else the .cache path.
+    """First candidate that is a usable sysroot, else the .cache path.
 
     ``os.path.join("/", "opt/tros/humble")`` is ``/opt/tros/humble``, so the
     native-"/" candidate needs no special-casing.
     """
     for c in _sysroot_candidates():
-        if all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS):
+        if _sysroot_complete(c):
             return c
     return os.path.join(REPO_DIR, ".cache", "x5_sysroot")
 
 
 def sysroot_ready() -> bool:
-    """True iff at least one candidate supplies every marker.
+    """True iff at least one candidate is a usable sysroot.
 
     Mirrors build_x5_docker.sh: it picks the first ready candidate (honoring an
     explicit X5_SYSROOT), so this answers "will the build find a usable sysroot".
     """
-    return any(all(os.path.isdir(os.path.join(c, p)) for p in SYSROOT_MARKERS)
-               for c in _sysroot_candidates())
+    return any(_sysroot_complete(c) for c in _sysroot_candidates())
 
 
 def native_aarch64_host() -> bool:

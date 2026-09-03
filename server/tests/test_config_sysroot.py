@@ -43,3 +43,36 @@ def test_ensure_sysroot_shortcircuits_on_native_host(monkeypatch):
     ok, detail = auto_test.ensure_sysroot("")
     assert ok is True
     assert "aarch64" in detail
+
+
+def _mk_sysroot(root, with_content=True):
+    (root / "opt" / "tros" / "humble").mkdir(parents=True)
+    (root / "usr" / "include").mkdir(parents=True)
+    (root / "usr" / "share" / "eigen3").mkdir(parents=True)
+    (root / "usr" / "lib" / "aarch64-linux-gnu").mkdir(parents=True)
+    if with_content:
+        (root / "usr" / "include" / "python3.10").mkdir(parents=True)
+        (root / "usr" / "lib" / "aarch64-linux-gnu" / "libpython3.10.so").write_text("")
+        (root / "usr" / "include" / "openssl").mkdir(parents=True)
+        (root / "usr" / "include" / "openssl" / "ssl.h").write_text("")
+    return root
+
+
+def test_sysroot_ready_false_when_crossbuild_content_missing(tmp_path, monkeypatch):
+    # mount dirs present but no python dev / openssl -> NOT ready (must re-pull)
+    root = _mk_sysroot(tmp_path, with_content=False)
+    monkeypatch.setattr(config, "_sysroot_candidates", lambda: [str(root)])
+    assert config.sysroot_ready() is False
+
+
+def test_sysroot_ready_true_when_crossbuild_content_present(tmp_path, monkeypatch):
+    root = _mk_sysroot(tmp_path, with_content=True)
+    monkeypatch.setattr(config, "_sysroot_candidates", lambda: [str(root)])
+    assert config.sysroot_ready() is True
+
+
+def test_sysroot_dir_returns_complete_candidate(tmp_path, monkeypatch):
+    incomplete = _mk_sysroot(tmp_path / "old", with_content=False)
+    complete = _mk_sysroot(tmp_path / "new", with_content=True)
+    monkeypatch.setattr(config, "_sysroot_candidates", lambda: [str(incomplete), str(complete)])
+    assert config.sysroot_dir() == str(complete)
