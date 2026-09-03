@@ -82,6 +82,7 @@ def test_mount_board_auto_exports_and_retries_on_access_denied(monkeypatch):
 
 def test_build_launch_script_fails_fast_when_data_root_not_exported(monkeypatch):
     monkeypatch.setattr(backtest, "Ssh", _FakeSsh)
+    monkeypatch.setattr(backtest, "_auto_export_host", lambda: (False, "no passwordless sudo"))
     monkeypatch.setattr(
         backtest.datasets, "get_dataset",
         lambda name: {"name": name, "path": "/x", "has_bag": True, "has_config": True},

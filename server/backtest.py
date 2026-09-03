@@ -120,23 +120,30 @@ def _attempt_mount(host: str, mnt: str, ip: str) -> dict:
 
 
 def _auto_export_host() -> tuple:
-    """Provision the host NFS export for DATA_ROOT via passwordless sudo (never prompt).
+    """Provision the host NFS export for DATA_ROOT (never prompt / never hang).
 
-    Returns (ok, detail). Only uses ``sudo -n`` so a server thread never blocks on a
-    password prompt: if the platform user lacks passwordless sudo it returns False
-    and the operator must run ``sudo bash setup_nfs.sh`` (or start via run.sh).
+    Returns (ok, detail). If the platform is already root it runs setup_nfs.sh
+    directly; otherwise it uses ``sudo -n`` (no prompt) so a server thread never
+    blocks. On missings privilege it returns False with an actionable hint.
     setup_nfs.sh reads DATA_ROOT from the environment, so it is passed through sudo.
     """
+    import os as _os
     import subprocess
 
     setup_nfs = os.path.join(config.REPO_DIR, "setup_nfs.sh")
     if not os.path.isfile(setup_nfs):
         return False, "setup_nfs.sh not found"
     try:
-        if subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=10).returncode != 0:
-            return False, "no passwordless sudo"
-        r = subprocess.run(["sudo", "-n", f"DATA_ROOT={config.DATA_ROOT}", "bash", setup_nfs],
-                           capture_output=True, text=True, timeout=60)
+        if _os.geteuid() == 0:
+            cmd = ["bash", setup_nfs]
+            env = {**_os.environ, "DATA_ROOT": config.DATA_ROOT}
+        else:
+            if subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=10).returncode != 0:
+                return False, ("no passwordless sudo — run the platform as root, or grant NOPASSWD sudo "
+                               "for setup_nfs.sh, or start via `sudo bash run.sh --data-root=...`")
+            cmd = ["sudo", "-n", f"DATA_ROOT={config.DATA_ROOT}", "bash", setup_nfs]
+            env = None
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         if r.returncode != 0:
             return False, (r.stderr or r.stdout or "").strip()[-120:]
         return True, "exported"
@@ -377,12 +384,10 @@ def build_launch_script(ip: str, dataset: str, image_topic: str = None, extra_ar
         mount_detail = m.get("detail", "")
         root_on_board = m.get("board_path")
     if not root_on_board:
-        hint = ""
-        if "access denied" in mount_detail.lower():
-            hint = (" — DATA_ROOT is not NFS-exported on the host; run "
-                    "`sudo bash setup_nfs.sh` (with DATA_ROOT set) or start via "
-                    "`run.sh --data-root=<dir>`, then 挂载数据 / retry")
-        return {"ok": False, "detail": f"data root not mounted on board: {mount_detail or '(run 挂载数据 first)'}{hint}"}
+        # mount_board already returns an actionable detail (incl. the access-denied
+        # + privilege fix), so surface it as-is rather than stacking a second hint.
+        detail = mount_detail or "data root not mounted on board (run 挂载数据 first)"
+        return {"ok": False, "detail": f"data root not mounted on board: {detail}"}
     mnt_ds = f"{root_on_board}/{dataset}"
     ok, why = _board_dataset_ready(ip, mnt_ds)
     if not ok:
