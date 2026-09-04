@@ -1057,6 +1057,38 @@ def ensure_deployed(ip: str) -> tuple:
     return _deploy_install(ip, install_dir, sha)
 
 
+def _record_failed_result(task: dict, err: str):
+    """Mark a commit-test task failed AND write a status=failed _meta.json.
+
+    Build/deploy/backtest-start failures never reach result collection, so
+    without a placeholder they only show in the task queue, never in 统计. Writing
+    a tiny failed _meta.json into the run's result dir lets the results view
+    surface the run with its error text (the row renders status=failed, no
+    metrics). Best-effort: a failure to write the placeholder must never prevent
+    the task from being marked failed.
+    """
+    outdir = ""
+    try:
+        outdir = _task_outdir(task["commit"], task["experiment"], task["dataset"])
+    except OSError:
+        outdir = ""
+    _finish_task(task, False, err, outdir)
+    if not outdir:
+        return
+    try:
+        # _finish_task syncs the caller dict when the id is found; set the fields
+        # defensively too so _write_meta never writes stale status/error.
+        task["status"] = "failed"
+        task["phase"] = ""
+        task["error"] = err
+        task["result_dir"] = outdir
+        task["finished_at"] = task.get("finished_at") or datetime.datetime.now().isoformat(timespec="seconds")
+        task["stats"] = {}
+        _write_meta(task, outdir)
+    except Exception:  # noqa: BLE001 — placeholder is best-effort
+        pass
+
+
 def _run_one_task(task: dict) -> None:
     """Execute one task's full chain: checkout/build → deploy → backtest → collect."""
     ip = task.get("board_ip") or get_config().get("board_ip", "")
@@ -1069,7 +1101,7 @@ def _run_one_task(task: dict) -> None:
     ok, log_tail = _run_build(task["commit"], ip)
     _update_task(task["id"], build_log_tail=log_tail[-1000:])
     if not ok:
-        _mark_failed(task, f"build: {log_tail[:500]}")
+        _record_failed_result(task, f"build: {log_tail[:500]}")
         return
     # 2) deploy
     if get_config().get("build_enabled", True):
@@ -1077,7 +1109,7 @@ def _run_one_task(task: dict) -> None:
         task["phase"] = "deploying"
         ok, detail = _deploy_install(ip)
         if not ok:
-            _mark_failed(task, f"deploy: {detail}")
+            _record_failed_result(task, f"deploy: {detail}")
             return
     # 3) backtest — apply the user's auto launch template if one is set (reused
     # across tasks: placeholders are rendered per-run; run_dir is never pinned
@@ -1091,10 +1123,10 @@ def _run_one_task(task: dict) -> None:
                                     launch_script_override=override,
                                     follow_run_dir_marker=False)
     except Exception as e:  # noqa: BLE001
-        _mark_failed(task, f"start_backtest exception: {e}")
+        _record_failed_result(task, f"start_backtest exception: {e}")
         return
     if not r.get("ok"):
-        _mark_failed(task, f"start_backtest: {r.get('detail', '')}")
+        _record_failed_result(task, f"start_backtest: {r.get('detail', '')}")
         return
     # 4) wait for VIO to exit
     done, err = batch._wait_finish(ip, expect_bag_play=not task.get("offline_bag", True))
