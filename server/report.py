@@ -89,18 +89,19 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
        font-size: 13px; line-height: 1.4; background: #fff; }
 h1 { font-size: 19px; margin: 2px 0 6px; }
 .meta { color: rgba(5,5,5,.45); font-size: 12px; margin-bottom: 16px; }
-table { border-collapse: collapse; width: 100%; margin: 2px 0 12px; }
-th, td { border: 1px solid #e6e6e6; padding: 6px 10px; text-align: left;
+table { border-collapse: collapse; width: 100%; table-layout: fixed;
+        margin: 2px 0 12px; }
+th, td { border: 1px solid #e6e6e6; padding: 5px 7px; text-align: left;
          vertical-align: middle; }
 th { background: #f7f7f7; font-weight: 600; color: rgba(5,5,5,.6);
-     font-size: 12px; white-space: nowrap; }
-td { font-size: 12.5px; }
-td.no { width: 30px; text-align: right; color: #999; }
-td.ds { word-break: break-word; min-width: 150px; }
+     font-size: 11.5px; white-space: nowrap; }
+td { font-size: 11.5px; }
+td.no { text-align: right; color: #999; }
+td.ds { word-break: break-word; }
 td.exp { white-space: nowrap; }
-td.num, td.mono { white-space: nowrap; font-family: "SFMono-Regular", Consolas,
-                  Menlo, monospace; font-size: 12px; }
-td.ctr { text-align: center; width: 96px; }
+td.num, td.mono { font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+                  font-size: 11px; }
+td.ctr { text-align: center; }
 .st-done { color: #52c41a; font-weight: 600; white-space: nowrap; }
 .st-failed { color: #ff4d4f; font-weight: 600; white-space: nowrap; }
 .st-running, .st-pending { color: #faad14; white-space: nowrap; }
@@ -109,7 +110,7 @@ table.flat tr { page-break-inside: avoid; }
 table.flat .err { color: #ff4d4f; font-size: 11px; max-width: 220px;
                   word-break: break-word; }
 /* 缩略图固定框 + contain；轨迹图为竖长图，用略高的框兼顾可读性 */
-img.thumb { object-fit: contain; width: 72px; height: 72px; display: block;
+img.thumb { object-fit: contain; width: 60px; height: 60px; display: block;
             border: 1px solid #e6e6e6; border-radius: 5px; background: #fff; }
 img.thumb + img.thumb { margin-top: 4px; }
 code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -156,7 +157,11 @@ def _row_html(it: dict, idx: int) -> str:
 
 def _flat_table(items: list) -> str:
     rows = "\n".join(_row_html(it, i + 1) for i, it in enumerate(items))
-    return f"""<table class="flat"><thead><tr>
+    return f"""<table class="flat"><colgroup>
+      <col style="width:3%"><col style="width:23%"><col style="width:8%">
+      <col style="width:13%"><col style="width:7%"><col style="width:20%">
+      <col style="width:12%"><col style="width:14%">
+    </colgroup><thead><tr>
       <th class="no">#</th><th>数据集</th><th>实验组</th>
       <th class="ctr">预览 / 轨迹</th><th class="num">路程(m)</th>
       <th title="终点坐标与零点的 2D 距离（假设 Z=0）">终点 · 漂移</th>
